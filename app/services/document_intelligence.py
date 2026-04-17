@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+import json
+import re
+import sys
+
+from app.utils.settings import AppSettings, get_settings
+
+
+DATE_PATTERN = re.compile(
+    r"\b(\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}|\d{2}\.\d{2}\.\d{4}|\d{2}\.\d{4})\b"
+)
+
+SEMANTIC_PHRASES = (
+    "valid until",
+    "maintenance until",
+    "maintenance ends",
+    "end of maintenance",
+    "supported until",
+    "is supported until",
+    "expires on",
+    "expiry",
+    "expiration",
+    "end of support",
+)
+
+SYSTEM_PROMPT = """You analyze SAP EarlyWatch Alert reports.
+Extract every maintenance, expiration, valid-until, support-until, or end-of-maintenance date.
+Return JSON only with this shape:
+{"items":[{"nombre":"Component name","fecha":"raw date as seen"}]}
+Infer the most reasonable component name from nearby context when needed.
+Do not include explanations or markdown fences."""
+
+
+class DocumentIntelligenceProvider(ABC):
+    @abstractmethod
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        """Return raw AI findings with keys `nombre` and `fecha`."""
+
+
+class FakeSemanticDocumentIntelligence(DocumentIntelligenceProvider):
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        findings: list[dict[str, str]] = []
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        for line in lines:
+            lowered = line.lower()
+            if not any(phrase in lowered for phrase in SEMANTIC_PHRASES):
+                continue
+
+            match = DATE_PATTERN.search(line)
+            if match is None:
+                continue
+
+            name = _infer_component_name(line, match.start())
+            if not name:
+                continue
+
+            findings.append({"nombre": name, "fecha": match.group(1)})
+
+        return findings
+
+
+class OpenAIDocumentIntelligence(DocumentIntelligenceProvider):
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        raise ValueError("OpenAI provider is not configured for this environment")
+
+
+class AzureOpenAIDocumentIntelligence(DocumentIntelligenceProvider):
+    def __init__(self, settings: AppSettings, client: object | None = None) -> None:
+        self._settings = settings
+        self._validate_settings()
+        self._client = client or self._build_client()
+
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        try:
+            response = self._client.chat.completions.create(
+                model=self._settings.azure_openai_deployment,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": _build_user_prompt(text)},
+                ],
+            )
+        except Exception as exc:
+            raise ValueError(f"Azure OpenAI request failed: {exc}") from exc
+        raw_content = _extract_response_text(response)
+        print("AZURE_RAW_CONTENT_START", file=sys.stderr, flush=True)
+        print(repr(raw_content), file=sys.stderr, flush=True)
+        print("AZURE_RAW_CONTENT_END", file=sys.stderr, flush=True)
+        return _parse_ai_payload(raw_content)
+
+    def _validate_settings(self) -> None:
+        if not self._settings.azure_openai_api_key:
+            raise ValueError("AZURE_OPENAI_API_KEY is required for Azure OpenAI")
+        if not self._settings.azure_openai_endpoint:
+            raise ValueError("AZURE_OPENAI_ENDPOINT is required for Azure OpenAI")
+        if not self._settings.azure_openai_deployment:
+            raise ValueError("AZURE_OPENAI_DEPLOYMENT is required for Azure OpenAI")
+
+    def _build_client(self) -> object:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise ValueError("OpenAI SDK dependency is not installed") from exc
+
+        endpoint = self._settings.azure_openai_endpoint.rstrip("/")
+        base_url = f"{endpoint}/openai/v1/"
+        return OpenAI(
+            api_key=self._settings.azure_openai_api_key,
+            base_url=base_url,
+        )
+
+
+class AzureOpenAIClientAdapter:
+    pass
+
+
+def create_document_intelligence_provider(
+    provider_name: str | None = None,
+    settings: AppSettings | None = None,
+    client: object | None = None,
+) -> DocumentIntelligenceProvider:
+    resolved_settings = settings or get_settings()
+    normalized = (provider_name or resolved_settings.ai_provider).lower()
+    if normalized == "fake":
+        return FakeSemanticDocumentIntelligence()
+    if normalized == "openai":
+        return OpenAIDocumentIntelligence()
+    if normalized == "azure-openai":
+        return AzureOpenAIDocumentIntelligence(resolved_settings, client=client)
+    raise ValueError("Unsupported AI provider")
+
+
+def _infer_component_name(line: str, date_start: int) -> str:
+    prefix = line[:date_start].strip(" .:-")
+    split_match = re.split(
+        r"\b(is supported until|valid until|maintenance until|maintenance ends on|maintenance ends|end of maintenance|supported until|expires on|expiry|expiration|end of support)\b",
+        prefix,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
+
+    candidate = split_match[0].strip(" .:-") if split_match else prefix
+    if not candidate:
+        return ""
+
+    candidate = re.sub(r"\bis$", "", candidate, flags=re.IGNORECASE).strip(" .:-")
+    return candidate.strip()
+
+
+def _build_user_prompt(text: str) -> str:
+    return (
+        "Extract all SAP EWA maintenance or expiration dates from the following text.\n"
+        "Keep raw dates exactly as found.\n\n"
+        f"{text}"
+    )
+
+
+def _extract_response_text(response: object) -> str:
+    try:
+        return response.choices[0].message.content
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise ValueError("Azure OpenAI response is not in the expected format") from exc
+
+
+def _parse_ai_payload(content: str) -> list[dict[str, str]]:
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.DOTALL).strip()
+
+    json_candidate = _extract_json_object(cleaned)
+    if json_candidate is not None:
+        cleaned = json_candidate
+
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Azure OpenAI response is not valid JSON") from exc
+
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError("Azure OpenAI response does not contain a valid items list")
+
+    normalized_items: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        nombre = str(item.get("nombre", "")).strip()
+        fecha = str(item.get("fecha", "")).strip()
+        if nombre and fecha:
+            normalized_items.append({"nombre": nombre, "fecha": fecha})
+
+    return normalized_items
+
+
+def _extract_json_object(content: str) -> str | None:
+    start = content.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for index in range(start, len(content)):
+        char = content[index]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start : index + 1]
+
+    return None
