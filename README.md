@@ -26,8 +26,8 @@ Servicio FastAPI orientado a documentos Word SAP EarlyWatch Alert para detectar 
 
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv
+source .venv/Scripts/activate
 python -m pip install -e ".[dev]"
 ```
 
@@ -35,7 +35,7 @@ python -m pip install -e ".[dev]"
 
 ```bash
 cd backend
-source .venv/bin/activate
+source .venv/Scripts/activate
 python -m pytest
 ```
 
@@ -43,7 +43,7 @@ python -m pytest
 
 ```bash
 cd backend
-source .venv/bin/activate
+source .venv/Scripts/activate
 python -m uvicorn app.main:app --reload
 ```
 
@@ -67,6 +67,16 @@ Completar en tu entorno o shell estas variables:
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_DEPLOYMENT`
+
+OCR opcional con Tesseract:
+
+```bash
+cd backend
+source .venv/Scripts/activate
+python -m pip install -e ".[ocr]"
+```
+
+Ademas, el equipo debe tener instalado el binario de Tesseract OCR. Si no queda en `PATH`, se puede definir `TESSERACT_CMD`.
 
 ## Endpoint
 

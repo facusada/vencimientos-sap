@@ -43,7 +43,7 @@ function applyFile(file) {
 
   if (!isSupportedFile(file.name)) {
     selectedFile.value = null;
-    errorMessage.value = "Solo se admiten archivos .doc o .docx.";
+    errorMessage.value = "Solo se admiten archivos .doc, .docx o .pdf.";
     if (fileInput.value) {
       fileInput.value.value = "";
     }
@@ -97,7 +97,7 @@ function openFilePicker() {
 }
 
 function isSupportedFile(filename) {
-  return [".doc", ".docx"].some((extension) =>
+  return [".doc", ".docx", ".pdf"].some((extension) =>
     filename.toLowerCase().endsWith(extension),
   );
 }
@@ -173,7 +173,7 @@ function triggerDownload(blob, filename) {
           ref="fileInput"
           class="sr-only"
           type="file"
-          accept=".doc,.docx"
+          accept=".doc,.docx,.pdf"
           :disabled="isUploading"
           @change="onFileChange"
         />
@@ -194,8 +194,11 @@ function triggerDownload(blob, filename) {
             >
               {{ selectedFile ? "Cambiar archivo" : "Elegir archivo" }}
             </button>
-            <span class="dropzone__hint">Formatos soportados: .doc, .docx</span>
+            <span class="dropzone__hint">Formatos soportados: .doc, .docx, .pdf</span>
           </div>
+          <p class="dropzone__note">
+            Recomendacion: si tienes el EWA en formato Word (.doc o .docx), suele dar una mejor extraccion la IA.
+          </p>
         </div>
       </div>
 

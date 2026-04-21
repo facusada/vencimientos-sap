@@ -11,6 +11,7 @@ from app.utils.settings import AppSettings, get_settings
 DATE_PATTERN = re.compile(
     r"\b(\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}|\d{2}\.\d{2}\.\d{4}|\d{2}\.\d{4})\b"
 )
+FULL_DATE_PATTERN = re.compile(r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}|\d{2}\.\d{2}\.\d{4})$")
 
 SEMANTIC_PHRASES = (
     "valid until",
@@ -59,7 +60,8 @@ class FakeSemanticDocumentIntelligence(DocumentIntelligenceProvider):
 
             findings.append({"nombre": name, "fecha": match.group(1)})
 
-        return findings
+        findings.extend(_extract_vendor_support_table_findings(lines))
+        return _deduplicate_findings(findings)
 
 
 class OpenAIDocumentIntelligence(DocumentIntelligenceProvider):
@@ -149,6 +151,96 @@ def _infer_component_name(line: str, date_start: int) -> str:
 
     candidate = re.sub(r"\bis$", "", candidate, flags=re.IGNORECASE).strip(" .:-")
     return candidate.strip()
+
+
+def _extract_vendor_support_table_findings(lines: list[str]) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+
+    for index, line in enumerate(lines):
+        normalized = line.lower()
+        if not normalized.startswith("end of standard vendor support"):
+            continue
+
+        cursor = index + 1
+        while cursor < len(lines) and lines[cursor].lower().startswith("end of extended vendor support"):
+            cursor += 1
+        if cursor < len(lines) and lines[cursor].lower() == "comment":
+            cursor += 1
+
+        if cursor >= len(lines):
+            continue
+
+        component_name = lines[cursor]
+        date_values = _collect_following_full_dates(lines, cursor + 1, limit=3)
+        if component_name and len(date_values) >= 2:
+            findings.extend(
+                {"nombre": component_name, "fecha": date_value}
+                for date_value in date_values[:2]
+            )
+
+        operating_system_dates = _extract_following_operating_system_dates(lines, cursor + 1)
+        findings.extend(
+            {"nombre": "Operating System", "fecha": date_value}
+            for date_value in operating_system_dates
+        )
+
+    return findings
+
+
+def _extract_following_operating_system_dates(lines: list[str], start_index: int) -> list[str]:
+    search_limit = min(len(lines), start_index + 24)
+
+    for index in range(start_index, search_limit):
+        normalized = lines[index].lower()
+        if "operating system version" not in normalized:
+            continue
+
+        return _collect_previous_full_dates(lines, index - 1, limit=2)
+
+    return []
+
+
+def _collect_following_full_dates(lines: list[str], start_index: int, limit: int) -> list[str]:
+    dates: list[str] = []
+    search_limit = min(len(lines), start_index + 12)
+
+    for index in range(start_index, search_limit):
+        candidate = lines[index]
+        if FULL_DATE_PATTERN.fullmatch(candidate):
+            dates.append(candidate)
+            if len(dates) == limit:
+                break
+
+    return dates
+
+
+def _collect_previous_full_dates(lines: list[str], start_index: int, limit: int) -> list[str]:
+    dates: list[str] = []
+    search_start = max(0, start_index - 8)
+
+    for index in range(start_index, search_start - 1, -1):
+        candidate = lines[index]
+        if FULL_DATE_PATTERN.fullmatch(candidate):
+            dates.append(candidate)
+            if len(dates) == limit:
+                break
+
+    return list(reversed(dates))
+
+
+def _deduplicate_findings(findings: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduplicated: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for finding in findings:
+        key = (finding.get("nombre", "").strip(), finding.get("fecha", "").strip())
+        if not all(key) or key in seen:
+            continue
+
+        seen.add(key)
+        deduplicated.append({"nombre": key[0], "fecha": key[1]})
+
+    return deduplicated
 
 
 def _build_user_prompt(text: str) -> str:

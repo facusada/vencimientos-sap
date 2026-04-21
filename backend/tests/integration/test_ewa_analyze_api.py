@@ -79,7 +79,7 @@ def test_post_ewa_analyze_rejects_unsupported_extension():
     assert response.json()["detail"] == "Unsupported file type"
 
 
-def test_post_ewa_analyze_returns_empty_excel_when_ai_finds_nothing():
+def test_post_ewa_analyze_returns_clear_error_when_ai_finds_nothing():
     class EmptyProvider(DocumentIntelligenceProvider):
         def extract_expirations(self, text: str) -> list[dict[str, str]]:
             return []
@@ -106,15 +106,8 @@ def test_post_ewa_analyze_returns_empty_excel_when_ai_finds_nothing():
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-
-    workbook = load_workbook(filename=BytesIO(response.content))
-    sheet = workbook.active
-
-    assert sheet.max_row == 1
-    assert sheet["A1"].value == "Seccion"
-    assert sheet["B1"].value == "Nombre"
-    assert sheet["C1"].value == "Fecha"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "No se detectaron fechas de vencimiento en el EWA enviado."
 
 
 def test_post_ewa_analyze_returns_excel_file_for_doc(monkeypatch):

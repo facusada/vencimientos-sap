@@ -24,6 +24,42 @@ def test_fake_document_intelligence_detects_varied_phrasings():
     assert {"nombre": "SSL Server PSE certificate", "fecha": "31.01.2028"} in result
 
 
+def test_fake_document_intelligence_detects_vendor_support_dates_from_ewa_tables():
+    text = """
+    End of Standard Vendor Support*
+    End of Extended Vendor Support*
+    Comment
+    SQL Server 2012
+    11.07.2017
+    12.07.2022
+    Planned Date
+    1177356
+    * Maintenance phases and duration for the DB version are defined by the vendor.
+    Standard vendor support for your database version has already ended / will end in the near future.
+    09.01.2018
+    10.10.2023
+    1177282
+    * Maintenance phases and duration for the operating system version are defined by the vendor.
+    The following table lists all information about your SAP kernel(s) currently in use.
+    Instance(s)
+    Age in Months
+    OS Family
+    749
+    500
+    97
+    Windows Server (x86_64)
+    """
+
+    provider = FakeSemanticDocumentIntelligence()
+
+    result = provider.extract_expirations(text)
+
+    assert {"nombre": "SQL Server 2012", "fecha": "11.07.2017"} in result
+    assert {"nombre": "SQL Server 2012", "fecha": "12.07.2022"} in result
+    assert {"nombre": "Operating System", "fecha": "09.01.2018"} in result
+    assert {"nombre": "Operating System", "fecha": "10.10.2023"} in result
+
+
 def test_azure_openai_document_intelligence_parses_json_response():
     captured_kwargs: dict[str, object] = {}
 

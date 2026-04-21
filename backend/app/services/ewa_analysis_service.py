@@ -99,6 +99,8 @@ def analyze_ewa_file(
 ) -> bytes:
     content = extract_text(filename, payload)
     records = build_expiration_records(content, provider or get_document_intelligence_provider())
+    if not records:
+        raise ValueError("No se detectaron fechas de vencimiento en el EWA enviado.")
     return build_expiration_workbook(records)
 
 
@@ -152,7 +154,11 @@ def _coerce_raw_findings(raw_items: Iterable[dict[str, str]]) -> list[RawExpirat
 
 def _resolve_finding_name(text: str, finding: RawExpirationFinding) -> str:
     suggested_name = finding.name.strip()
-    candidates = _find_source_candidates(text, finding.raw_date)
+    candidates = _find_source_candidates(
+        text,
+        finding.raw_date,
+        allow_forward_lookup=_is_generic_component_name(suggested_name),
+    )
 
     matched_candidate = _match_source_candidate(suggested_name, candidates)
     if matched_candidate:
@@ -187,7 +193,11 @@ def _infer_name_from_source_text(text: str, raw_date: str) -> str:
     return ""
 
 
-def _find_source_candidates(text: str, raw_date: str) -> list[tuple[str, str]]:
+def _find_source_candidates(
+    text: str,
+    raw_date: str,
+    allow_forward_lookup: bool = False,
+) -> list[tuple[str, str]]:
     lines = [line.strip() for line in text.splitlines()]
     candidates: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -197,6 +207,8 @@ def _find_source_candidates(text: str, raw_date: str) -> list[tuple[str, str]]:
             continue
 
         candidate_name, candidate_index = _find_candidate_name_before_line(lines, index)
+        if not candidate_name and allow_forward_lookup:
+            candidate_name, candidate_index = _find_candidate_name_after_line(lines, index)
         if not candidate_name or candidate_name in seen:
             continue
 
@@ -212,6 +224,7 @@ def _find_candidate_name_before_line(lines: list[str], index: int) -> tuple[str,
         if (
             not candidate
             or _is_header_like(candidate)
+            or _is_section_heading(candidate)
             or _looks_like_date(candidate)
             or _is_invalid_candidate_name(candidate)
         ):
@@ -232,6 +245,22 @@ def _find_candidate_context(lines: list[str], candidate_index: int) -> str:
             context_lines.append(candidate)
 
     return " ".join(reversed(context_lines))
+
+
+def _find_candidate_name_after_line(lines: list[str], index: int) -> tuple[str, int]:
+    for lookahead_index in range(index + 1, min(len(lines), index + 15)):
+        candidate = lines[lookahead_index].strip()
+        if (
+            not candidate
+            or _is_header_like(candidate)
+            or _is_section_heading(candidate)
+            or _looks_like_date(candidate)
+            or _is_invalid_candidate_name(candidate)
+        ):
+            continue
+        return candidate, lookahead_index
+
+    return "", -1
 
 
 def _match_source_candidate(suggested_name: str, candidates: list[tuple[str, str]]) -> str:
@@ -264,7 +293,8 @@ def _match_source_candidate(suggested_name: str, candidates: list[tuple[str, str
             return best_structured_candidate
 
     if (
-        len(candidates) == 1
+        _is_generic_component_name(suggested_name)
+        and len(candidates) == 1
         and _is_component_like_name(candidates[0][0])
         and _has_support_context([candidates[0][1]])
     ):
@@ -303,8 +333,20 @@ def _is_invalid_candidate_name(candidate_name: str) -> bool:
         "has expired",
         "rating legend",
         "description",
+        "standard vendor support",
+        "extended vendor support",
+        "maintenance phases and duration",
+        "operating system version",
+        "the following table lists",
+        "planned date",
+        "for more information",
+        "supported until",
+        "expires on",
+        "valid until",
+        "maintenance until",
+        "end of support",
     )
-    return bool(re.fullmatch(r"\d+|[\d.\-]+", normalized)) or any(
+    return bool(re.fullmatch(r"\d+|[\d.\-]+|\d+\s+hosts?", normalized)) or any(
         hint in normalized for hint in invalid_sentence_hints
     )
 
@@ -347,9 +389,14 @@ def _resolve_finding_section(text: str, raw_date: str) -> str:
         if raw_date not in line:
             continue
 
+        window = [candidate for candidate in lines[max(0, index - 5) : index + 6] if candidate]
+        vendor_support_context = _has_vendor_support_context(window)
+
         for lookback_index in range(index - 1, -1, -1):
             candidate = lines[lookback_index].strip()
             if not candidate:
+                continue
+            if vendor_support_context and candidate.lower() == "sap kernel release":
                 continue
             if _is_section_heading(candidate):
                 return candidate
@@ -367,15 +414,30 @@ def _is_noise_context(window: list[str]) -> bool:
     return any(hint in normalized_window for hint in NOISE_CONTEXT_HINTS)
 
 
+def _has_vendor_support_context(window: list[str]) -> bool:
+    normalized_window = " ".join(window).lower()
+    vendor_support_hints = (
+        "end of standard vendor support",
+        "end of extended vendor support",
+        "database version has already ended",
+        "operating system version",
+    )
+    return any(hint in normalized_window for hint in vendor_support_hints)
+
+
 def _is_section_heading(line: str) -> bool:
     normalized = line.strip().lower()
+    if normalized.startswith("* "):
+        return False
     if normalized.endswith(" - maintenance phases"):
+        return True
+    if normalized.endswith(" - maintenance status"):
         return True
     if "support package stack for" in normalized:
         return True
     if normalized in {"sap kernel release", "certificates"}:
         return True
-    return any(hint in normalized for hint in SECTION_HEADING_HINTS)
+    return normalized in SECTION_HEADING_HINTS
 
 
 def _best_structured_candidate(candidates: list[tuple[str, str]]) -> str:

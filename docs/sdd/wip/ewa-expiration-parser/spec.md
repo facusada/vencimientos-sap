@@ -22,7 +22,10 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 - Estructuracion de resultados de IA a una lista normalizada de objetos `nombre` + `fecha`.
 - Normalizacion de fechas a formato ISO `YYYY-MM-DD`.
 - Soporte para fechas expresadas como `DD.MM.YYYY`, `YYYY-MM-DD`, `YYYY/MM/DD` y `MM.YYYY`.
+- Soporte para tablas de EWA con columnas de mantenimiento o soporte vendor como `End of Standard Vendor Support*` y `End of Extended Vendor Support*`.
+- Fallback automatico con OCR para PDFs con poco texto extraible o documentos Word con imagenes embebidas cuando el extractor textual no sea suficiente.
 - Generacion de un archivo Excel `.xlsx` con columnas `Seccion`, `Nombre` y `Fecha`.
+- Formato visual del Excel para destacar vencimientos: amarillo suave para fechas ya vencidas y verde suave para fechas futuras o vigentes, manteniendo contraste legible.
 - Eliminacion de duplicados exactos por `nombre + fecha`.
 - Suite de pruebas unitarias e integracion.
 
@@ -30,7 +33,7 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 
 - Persistencia en base de datos.
 - Integracion real con SAP, BTP, Azure DevOps o almacenamiento cloud.
-- OCR de imagenes embebidas dentro del documento.
+- OCR como interpretacion visual avanzada del contenido; en esta iteracion solo se usara como fallback de extraccion textual.
 - Autenticacion, autorizacion y multitenancy.
 - Integracion productiva con OpenAI o Azure OpenAI; solo se dejara la abstraccion lista.
 
@@ -44,7 +47,10 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 2. Un analista carga un `.doc` legado y el sistema lo procesa directamente si es Word 2003 XML; si es binario, intenta convertirlo y analizarlo. Si no hay soporte local para conversion, falla de forma controlada.
 3. Un flujo automatizado usa el endpoint para transformar EWAs en un Excel consolidado de vencimientos.
 4. La capa de document intelligence interpreta frases variadas como `valid until`, `maintenance until`, `supported until`, `end of maintenance` o `expires on`.
-5. Si no se detectan hallazgos, el sistema devuelve un Excel vacio con encabezados.
+5. La capa de document intelligence interpreta tablas EWA que expresan soporte vendor mediante columnas como `End of Standard Vendor Support*` y `End of Extended Vendor Support*`, aunque no exista una frase narrativa del tipo `supported until`.
+6. Si no se detectan hallazgos, el sistema no genera Excel y devuelve un mensaje claro al usuario indicando que el EWA no contiene fechas de vencimiento detectables.
+7. Si un PDF tiene poco o nada de texto extraible, el sistema intenta OCR automaticamente antes de fallar.
+8. Si un documento Word contiene imagenes embebidas, el sistema puede sumar el texto OCR detectado en esas imagenes al contexto enviado a IA.
 
 ## Criterios de aceptacion
 
@@ -58,13 +64,17 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 8. Duplicados exactos de `nombre + fecha` no deben exportarse.
 9. El Excel final debe contener exactamente tres columnas: `Seccion`, `Nombre` y `Fecha`.
 10. El endpoint `POST /ewa/analyze` debe responder con codigo `200` y un archivo Excel descargable cuando el archivo sea valido.
-11. Si no hay vencimientos detectados, el sistema debe devolver un Excel vacio con encabezados.
+11. Si no hay vencimientos detectados, el sistema debe responder con error controlado `400` y un mensaje claro para el usuario, sin generar un Excel vacio.
 12. Si el documento no puede procesarse, el endpoint debe responder con error `400`.
+13. El sistema debe exportar fechas de soporte vendor detectadas en tablas EWA aunque el componente aparezca antes o despues de las fechas dentro del bloque tabular extraido.
+14. El Excel debe resaltar visualmente cada fila segun el estado de la fecha normalizada: amarillo suave si la fecha ya vencio y verde suave si la fecha aun no vencio.
+15. El sistema debe activar OCR automaticamente cuando detecte PDFs con muy poco texto extraible o imagenes embebidas en documentos Word y el OCR este disponible.
 
 ## Edge cases
 
 - Texto Word con muchas tablas o saltos de linea fragmentados.
 - Componentes con nombres no identicos entre secciones.
+- Bloques tabulares donde el componente de sistema operativo aparece despues de las fechas de soporte vendor.
 - Multiples fechas para un mismo bloque funcional.
 - Fechas vencidas y futuras en una misma seccion.
 - Componentes repetidos.

@@ -1,5 +1,5 @@
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, WindowsPath
 import shutil
 import subprocess
 
@@ -27,6 +27,43 @@ def test_extract_text_supports_docx_files():
     assert "Certificate ABC valid until 31.12.2026" in result
     assert "SAP Product Version" in result
     assert "supported until 02.2027" in result
+
+
+def test_extract_text_uses_ocr_for_pdf_without_extractable_text(monkeypatch: pytest.MonkeyPatch):
+    class FakePage:
+        def extract_text(self) -> str:
+            return ""
+
+    class FakeReader:
+        pages = [FakePage()]
+
+    monkeypatch.setattr("pypdf.PdfReader", lambda stream: FakeReader())
+    monkeypatch.setattr(
+        "app.parsers.text_extractor._extract_pdf_ocr_text",
+        lambda payload: "Screenshot table says valid until 31.12.2027",
+    )
+
+    result = extract_text("ewa.pdf", b"fake-pdf")
+
+    assert result == "Screenshot table says valid until 31.12.2027"
+
+
+def test_extract_text_appends_ocr_content_for_docx_images(monkeypatch: pytest.MonkeyPatch):
+    document = Document()
+    document.add_paragraph("Kernel expiry: 2026-12-31")
+
+    buffer = BytesIO()
+    document.save(buffer)
+
+    monkeypatch.setattr(
+        "app.parsers.text_extractor._extract_docx_image_ocr_text",
+        lambda payload: "Image caption says SQL Server 2012 12.07.2022",
+    )
+
+    result = extract_text("ewa.docx", buffer.getvalue())
+
+    assert "Kernel expiry: 2026-12-31" in result
+    assert "Image caption says SQL Server 2012 12.07.2022" in result
 
 
 def test_extract_text_supports_doc_files_via_legacy_extractor(monkeypatch: pytest.MonkeyPatch):
@@ -71,7 +108,7 @@ def test_extract_doc_text_supports_non_windows_via_libreoffice(monkeypatch: pyte
 
     def fake_run(command: list[str], capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
         assert command[:4] == ["/usr/bin/soffice", "--headless", "--convert-to", "docx"]
-        outdir = Path(command[command.index("--outdir") + 1])
+        outdir = WindowsPath(command[command.index("--outdir") + 1])
         converted = outdir / "input.docx"
         converted.write_bytes(b"converted-docx")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")

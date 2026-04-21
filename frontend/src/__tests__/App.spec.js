@@ -43,11 +43,20 @@ describe("App upload flow", () => {
     expect(button.attributes("disabled")).toBeUndefined();
   });
 
+  it("accepts pdf files in the picker", async () => {
+    const wrapper = mount(App);
+
+    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
+
+    expect(wrapper.text()).toContain("ewa.pdf");
+    expect(wrapper.text()).toContain("Recomendacion: si tienes el EWA en formato Word (.doc o .docx)");
+  });
+
   it("shows a validation message for unsupported files", async () => {
     const wrapper = mount(App);
-    await selectFile(wrapper, new File(["bad"], "ewa.pdf", { type: "application/pdf" }));
+    await selectFile(wrapper, new File(["bad"], "ewa.csv", { type: "text/csv" }));
 
-    expect(wrapper.text()).toContain("Solo se admiten archivos .doc o .docx.");
+    expect(wrapper.text()).toContain("Solo se admiten archivos .doc, .docx o .pdf.");
   });
 
   it("posts the selected file and triggers the Excel download", async () => {
@@ -115,5 +124,25 @@ describe("App upload flow", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("LibreOffice is required to process legacy .doc files on macOS/Linux");
+  });
+
+  it("shows a clear message when the EWA has no expiration dates", async () => {
+    vi.spyOn(window, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "No se detectaron fechas de vencimiento en el EWA enviado." }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+    );
+
+    const wrapper = mount(App);
+    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
+
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("No se detectaron fechas de vencimiento en el EWA enviado.");
+    expect(anchorClickSpy).not.toHaveBeenCalled();
   });
 });

@@ -1,10 +1,16 @@
 import os
+import sys
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PosixPath, WindowsPath
 import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+
+from app.services.ocr_service import create_ocr_service
+from app.services.ocr_service import render_pdf_pages_to_images
+
+PDF_TEXT_OCR_THRESHOLD = 120
 
 
 def extract_text(filename: str, payload: bytes) -> str:
@@ -33,6 +39,10 @@ def _extract_pdf_text(payload: bytes) -> str:
 
     reader = PdfReader(BytesIO(payload))
     content = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    if len(content) < PDF_TEXT_OCR_THRESHOLD:
+        ocr_content = _extract_pdf_ocr_text(payload)
+        if ocr_content:
+            content = "\n".join(part for part in [content, ocr_content] if part).strip()
     if not content:
         raise ValueError("PDF does not contain extractable text")
     return content
@@ -53,6 +63,10 @@ def _extract_docx_text(payload: bytes) -> str:
                 if cell_text:
                     segments.append(cell_text)
 
+    ocr_content = _extract_docx_image_ocr_text(payload)
+    if ocr_content:
+        segments.append(ocr_content)
+
     content = "\n".join(segments).strip()
     if not content:
         raise ValueError("Word document does not contain extractable text")
@@ -64,8 +78,8 @@ def _extract_doc_text(payload: bytes) -> str:
         return _extract_word_2003_xml_text(payload)
 
     with tempfile.TemporaryDirectory(prefix="ewa-doc-") as temp_dir:
-        source_path = Path(temp_dir) / "input.doc"
-        target_path = Path(temp_dir) / "input.docx"
+        source_path = _build_os_path(temp_dir) / "input.doc"
+        target_path = _build_os_path(temp_dir) / "input.docx"
         source_path.write_bytes(payload)
 
         _convert_doc_to_docx(source_path, target_path)
@@ -169,3 +183,56 @@ def _extract_word_2003_xml_text(payload: bytes) -> str:
 
 def _escape_powershell_path(path: Path) -> str:
     return str(path).replace("'", "''")
+
+
+def _extract_pdf_ocr_text(payload: bytes) -> str:
+    try:
+        images = render_pdf_pages_to_images(payload)
+    except ValueError:
+        return ""
+
+    return create_ocr_service().extract_text_from_images(images)
+
+
+def _extract_docx_image_ocr_text(payload: bytes) -> str:
+    try:
+        from docx import Document
+    except ImportError:
+        return ""
+
+    document = Document(BytesIO(payload))
+    images = _extract_docx_images(document)
+    if not images:
+        return ""
+
+    try:
+        return create_ocr_service().extract_text_from_images(images)
+    except ValueError:
+        return ""
+
+
+def _extract_docx_images(document) -> list[bytes]:
+    image_bytes: list[bytes] = []
+    seen: set[str] = set()
+
+    for rel in document.part.rels.values():
+        reltype = getattr(rel, "reltype", "")
+        if "image" not in reltype:
+            continue
+
+        image_part = getattr(rel, "target_part", None)
+        partname = str(getattr(image_part, "partname", ""))
+        if not image_part or partname in seen:
+            continue
+
+        seen.add(partname)
+        blob = getattr(image_part, "blob", b"")
+        if blob:
+            image_bytes.append(blob)
+
+    return image_bytes
+
+
+def _build_os_path(base_path: str):
+    path_cls = WindowsPath if sys.platform.startswith("win") else PosixPath
+    return path_cls(base_path)

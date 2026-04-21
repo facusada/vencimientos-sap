@@ -167,3 +167,51 @@ def test_build_expiration_records_rejects_rating_legend_text_as_component_name()
     assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
         ("SAP Application Release - Maintenance Phases", "EHP8 FOR SAP ERP 6.0", "2027-12-31"),
     ]
+
+
+def test_build_expiration_records_keeps_vendor_support_dates_from_ewa_overview_tables():
+    provider = GenericEWANameProvider()
+    text = """
+    Operating System(s) - Maintenance Phases
+    SAP Kernel Release
+    End of Standard Vendor Support*
+    End of Extended Vendor Support*
+    Comment
+    SQL Server 2012
+    11.07.2017
+    12.07.2022
+    Planned Date
+    1177356
+    * Maintenance phases and duration for the DB version are defined by the vendor.
+    Standard vendor support for your database version has already ended / will end in the near future.
+    09.01.2018
+    10.10.2023
+    1177282
+    * Maintenance phases and duration for the operating system version are defined by the vendor.
+    The following table lists all information about your SAP kernel(s) currently in use.
+    Instance(s)
+    Age in Months
+    OS Family
+    749
+    500
+    97
+    Windows Server (x86_64)
+    """
+
+    class VendorSupportProvider(DocumentIntelligenceProvider):
+        def extract_expirations(self, text: str) -> list[dict[str, str]]:
+            return [
+                {"nombre": "SQL Server 2012", "fecha": "11.07.2017"},
+                {"nombre": "SQL Server 2012", "fecha": "12.07.2022"},
+                {"nombre": "Operating System", "fecha": "09.01.2018"},
+                {"nombre": "Operating System", "fecha": "10.10.2023"},
+            ]
+
+    result = build_expiration_records(text, VendorSupportProvider())
+
+    assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
+        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2017-07-11"),
+        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2022-07-12"),
+        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2018-01-09"),
+        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2023-10-10"),
+    ]
