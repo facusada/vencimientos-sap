@@ -10,6 +10,7 @@ class RawExpirationFinding:
 
 @dataclass(slots=True)
 class ExpirationRecord:
+    source_section: str
     name: str
     expiration_date: str
 

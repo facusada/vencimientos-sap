@@ -61,6 +61,9 @@ def test_azure_openai_document_intelligence_parses_json_response():
     result = provider.extract_expirations("Kernel expires on 2026-12-31.")
 
     assert captured_kwargs["response_format"] == {"type": "json_object"}
+    assert "BEGIN_DOCUMENT" in captured_kwargs["messages"][1]["content"]
+    assert "Use only component names that appear in the document text" in captured_kwargs["messages"][1]["content"]
+    assert "Ignore analysis windows" in captured_kwargs["messages"][1]["content"]
     assert result == [
         {"nombre": "Kernel", "fecha": "2026-12-31"},
         {"nombre": "SAP Product Version", "fecha": "02.2027"},

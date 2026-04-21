@@ -1,8 +1,10 @@
 import os
 from io import BytesIO
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 
 
 def extract_text(filename: str, payload: bytes) -> str:
@@ -58,12 +60,12 @@ def _extract_docx_text(payload: bytes) -> str:
 
 
 def _extract_doc_text(payload: bytes) -> str:
-    if os.name != "nt":
-        raise ValueError("Legacy .doc files are only supported on Windows")
+    if _looks_like_word_2003_xml(payload):
+        return _extract_word_2003_xml_text(payload)
 
     with tempfile.TemporaryDirectory(prefix="ewa-doc-") as temp_dir:
         source_path = Path(temp_dir) / "input.doc"
-        target_path = Path(temp_dir) / "converted.docx"
+        target_path = Path(temp_dir) / "input.docx"
         source_path.write_bytes(payload)
 
         _convert_doc_to_docx(source_path, target_path)
@@ -71,6 +73,14 @@ def _extract_doc_text(payload: bytes) -> str:
 
 
 def _convert_doc_to_docx(source_path: Path, target_path: Path) -> None:
+    if os.name == "nt":
+        _convert_doc_to_docx_windows(source_path, target_path)
+        return
+
+    _convert_doc_to_docx_non_windows(source_path, target_path)
+
+
+def _convert_doc_to_docx_windows(source_path: Path, target_path: Path) -> None:
     # 16 is the Word constant for wdFormatDocumentDefault (.docx).
     script = f"""
 $ErrorActionPreference = 'Stop'
@@ -96,6 +106,65 @@ try {{
 
     if result.returncode != 0 or not target_path.exists():
         raise ValueError("Microsoft Word is required to process legacy .doc files")
+
+
+def _convert_doc_to_docx_non_windows(source_path: Path, target_path: Path) -> None:
+    libreoffice_binary = shutil.which("soffice") or shutil.which("libreoffice")
+    if libreoffice_binary is None:
+        raise ValueError("LibreOffice is required to process legacy .doc files on macOS/Linux")
+
+    result = subprocess.run(
+        [
+            libreoffice_binary,
+            "--headless",
+            "--convert-to",
+            "docx",
+            "--outdir",
+            str(target_path.parent),
+            str(source_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0 or not target_path.exists():
+        raise ValueError("LibreOffice is required to process legacy .doc files on macOS/Linux")
+
+
+def _looks_like_word_2003_xml(payload: bytes) -> bool:
+    leading_text = payload[:2048].decode("utf-8", errors="ignore").lower()
+    return (
+        "<?xml" in leading_text
+        and "progid=\"word.document\"" in leading_text
+        and "schemas.microsoft.com/office/word/2003/wordml" in leading_text
+    )
+
+
+def _extract_word_2003_xml_text(payload: bytes) -> str:
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise ValueError("Word XML document is not valid XML") from exc
+
+    segments: list[str] = []
+    seen: set[str] = set()
+
+    for node in root.iter():
+        if not node.tag.endswith("}t"):
+            continue
+
+        text = "".join(node.itertext()).strip()
+        if not text or text in seen:
+            continue
+
+        seen.add(text)
+        segments.append(text)
+
+    content = "\n".join(segments).strip()
+    if not content:
+        raise ValueError("Word document does not contain extractable text")
+    return content
 
 
 def _escape_powershell_path(path: Path) -> str:

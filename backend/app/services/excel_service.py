@@ -9,10 +9,10 @@ def build_expiration_workbook(records: list[ExpirationRecord]) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Expirations"
-    sheet.append(["Nombre", "Fecha"])
+    sheet.append(["Seccion", "Nombre", "Fecha"])
 
     for record in records:
-        sheet.append([record.name, record.expiration_date])
+        sheet.append([record.source_section, record.name, record.expiration_date])
 
     buffer = BytesIO()
     workbook.save(buffer)

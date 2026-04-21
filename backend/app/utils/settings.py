@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 
-load_dotenv()
+for dotenv_path in (Path.cwd() / ".env", Path(__file__).resolve().parents[3] / ".env"):
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path, override=False)
 
 
 @dataclass(slots=True)

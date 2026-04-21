@@ -153,9 +153,15 @@ def _infer_component_name(line: str, date_start: int) -> str:
 
 def _build_user_prompt(text: str) -> str:
     return (
-        "Extract all SAP EWA maintenance or expiration dates from the following text.\n"
+        "Extract all SAP EWA maintenance or expiration dates from the document below.\n"
+        "Use only component names that appear in the document text.\n"
+        "Do not use instruction text, prompt text, or generic placeholders as component names.\n"
+        "Ignore analysis windows, SQL statement dates, collection periods, CPU peak hours, and operational telemetry dates.\n"
+        "If a date is present but no component can be identified from nearby document context, omit that item.\n"
         "Keep raw dates exactly as found.\n\n"
-        f"{text}"
+        "BEGIN_DOCUMENT\n"
+        f"{text}\n"
+        "END_DOCUMENT"
     )
 
 

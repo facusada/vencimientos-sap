@@ -58,12 +58,15 @@ def test_post_ewa_analyze_returns_excel_file_for_docx():
     workbook = load_workbook(filename=BytesIO(response.content))
     sheet = workbook.active
 
-    assert sheet["A1"].value == "Nombre"
-    assert sheet["B1"].value == "Fecha"
-    assert sheet["A2"].value == "SAP Product Version"
-    assert sheet["B2"].value == "2027-02-28"
-    assert sheet["A3"].value == "Kernel"
-    assert sheet["B3"].value == "2026-12-31"
+    assert sheet["A1"].value == "Seccion"
+    assert sheet["B1"].value == "Nombre"
+    assert sheet["C1"].value == "Fecha"
+    assert sheet["A2"].value is None
+    assert sheet["B2"].value == "SAP Product Version"
+    assert sheet["C2"].value == "2027-02-28"
+    assert sheet["A3"].value is None
+    assert sheet["B3"].value == "Kernel"
+    assert sheet["C3"].value == "2026-12-31"
 
 
 def test_post_ewa_analyze_rejects_unsupported_extension():
@@ -109,5 +112,47 @@ def test_post_ewa_analyze_returns_empty_excel_when_ai_finds_nothing():
     sheet = workbook.active
 
     assert sheet.max_row == 1
-    assert sheet["A1"].value == "Nombre"
-    assert sheet["B1"].value == "Fecha"
+    assert sheet["A1"].value == "Seccion"
+    assert sheet["B1"].value == "Nombre"
+    assert sheet["C1"].value == "Fecha"
+
+
+def test_post_ewa_analyze_returns_excel_file_for_doc(monkeypatch):
+    class LegacyStubProvider(DocumentIntelligenceProvider):
+        def extract_expirations(self, text: str) -> list[dict[str, str]]:
+            assert "legacy doc content" in text
+            return [{"nombre": "Kernel", "fecha": "2026-12-31"}]
+
+    app.dependency_overrides[get_document_intelligence_provider] = (
+        lambda: LegacyStubProvider()
+    )
+    monkeypatch.setattr(
+        "app.services.ewa_analysis_service.extract_text",
+        lambda filename, payload: "legacy doc content" if filename == "ewa.doc" and payload == b"legacy-doc" else "",
+    )
+
+    try:
+        response = client.post(
+            "/ewa/analyze",
+            files={
+                "file": (
+                    "ewa.doc",
+                    b"legacy-doc",
+                    "application/msword",
+                )
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+    workbook = load_workbook(filename=BytesIO(response.content))
+    sheet = workbook.active
+
+    assert sheet["A1"].value == "Seccion"
+    assert sheet["B1"].value == "Nombre"
+    assert sheet["C1"].value == "Fecha"
+    assert sheet["A2"].value is None
+    assert sheet["B2"].value == "Kernel"
+    assert sheet["C2"].value == "2026-12-31"
