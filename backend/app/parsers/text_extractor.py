@@ -10,9 +10,6 @@ import xml.etree.ElementTree as ET
 from app.services.ocr_service import create_ocr_service
 from app.services.ocr_service import render_pdf_pages_to_images
 
-PDF_TEXT_OCR_THRESHOLD = 120
-
-
 def extract_text(filename: str, payload: bytes) -> str:
     suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
 
@@ -39,10 +36,9 @@ def _extract_pdf_text(payload: bytes) -> str:
 
     reader = PdfReader(BytesIO(payload))
     content = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
-    if len(content) < PDF_TEXT_OCR_THRESHOLD:
-        ocr_content = _extract_pdf_ocr_text(payload)
-        if ocr_content:
-            content = "\n".join(part for part in [content, ocr_content] if part).strip()
+    ocr_content = _extract_pdf_ocr_text(payload)
+    if ocr_content:
+        content = "\n".join(part for part in [content, ocr_content] if part).strip()
     if not content:
         raise ValueError("PDF does not contain extractable text")
     return content
@@ -63,7 +59,7 @@ def _extract_docx_text(payload: bytes) -> str:
                 if cell_text:
                     segments.append(cell_text)
 
-    ocr_content = _extract_docx_image_ocr_text(payload)
+    ocr_content = _extract_docx_ocr_text(payload)
     if ocr_content:
         segments.append(ocr_content)
 
@@ -75,7 +71,11 @@ def _extract_docx_text(payload: bytes) -> str:
 
 def _extract_doc_text(payload: bytes) -> str:
     if _looks_like_word_2003_xml(payload):
-        return _extract_word_2003_xml_text(payload)
+        content = _extract_word_2003_xml_text(payload)
+        ocr_content = _extract_office_document_ocr_text(payload, "doc")
+        if ocr_content:
+            content = "\n".join(part for part in [content, ocr_content] if part).strip()
+        return content
 
     with tempfile.TemporaryDirectory(prefix="ewa-doc-") as temp_dir:
         source_path = _build_os_path(temp_dir) / "input.doc"
@@ -188,49 +188,90 @@ def _escape_powershell_path(path: Path) -> str:
 def _extract_pdf_ocr_text(payload: bytes) -> str:
     try:
         images = render_pdf_pages_to_images(payload)
-    except ValueError:
-        return ""
-
-    return create_ocr_service().extract_text_from_images(images)
-
-
-def _extract_docx_image_ocr_text(payload: bytes) -> str:
-    try:
-        from docx import Document
-    except ImportError:
-        return ""
-
-    document = Document(BytesIO(payload))
-    images = _extract_docx_images(document)
-    if not images:
-        return ""
-
-    try:
         return create_ocr_service().extract_text_from_images(images)
-    except ValueError:
+    except Exception:
         return ""
 
 
-def _extract_docx_images(document) -> list[bytes]:
-    image_bytes: list[bytes] = []
-    seen: set[str] = set()
+def _extract_docx_ocr_text(payload: bytes) -> str:
+    return _extract_office_document_ocr_text(payload, "docx")
 
-    for rel in document.part.rels.values():
-        reltype = getattr(rel, "reltype", "")
-        if "image" not in reltype:
-            continue
 
-        image_part = getattr(rel, "target_part", None)
-        partname = str(getattr(image_part, "partname", ""))
-        if not image_part or partname in seen:
-            continue
+def _extract_office_document_ocr_text(payload: bytes, suffix: str) -> str:
+    with tempfile.TemporaryDirectory(prefix=f"ewa-{suffix}-ocr-") as temp_dir:
+        source_path = _build_os_path(temp_dir) / f"input.{suffix}"
+        target_path = _build_os_path(temp_dir) / "input.pdf"
+        source_path.write_bytes(payload)
 
-        seen.add(partname)
-        blob = getattr(image_part, "blob", b"")
-        if blob:
-            image_bytes.append(blob)
+        try:
+            _convert_office_document_to_pdf(source_path, target_path)
+        except ValueError:
+            return ""
 
-    return image_bytes
+        if not target_path.exists():
+            return ""
+
+        return _extract_pdf_ocr_text(target_path.read_bytes())
+
+
+def _convert_office_document_to_pdf(source_path: Path, target_path: Path) -> None:
+    if os.name == "nt":
+        _convert_office_document_to_pdf_windows(source_path, target_path)
+        return
+
+    _convert_office_document_to_pdf_non_windows(source_path, target_path)
+
+
+def _convert_office_document_to_pdf_windows(source_path: Path, target_path: Path) -> None:
+    # 17 is the Word constant for wdFormatPDF.
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$word = $null
+$document = $null
+try {{
+    $word = New-Object -ComObject Word.Application
+    $word.Visible = $false
+    $document = $word.Documents.Open('{_escape_powershell_path(source_path)}')
+    $document.SaveAs([ref] '{_escape_powershell_path(target_path)}', [ref] 17)
+}} finally {{
+    if ($document -ne $null) {{ $document.Close() }}
+    if ($word -ne $null) {{ $word.Quit() }}
+}}
+""".strip()
+
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0 or not target_path.exists():
+        raise ValueError("Microsoft Word is required to render Word documents for OCR")
+
+
+def _convert_office_document_to_pdf_non_windows(source_path: Path, target_path: Path) -> None:
+    libreoffice_binary = shutil.which("soffice") or shutil.which("libreoffice")
+    if libreoffice_binary is None:
+        raise ValueError("LibreOffice is required to render Word documents for OCR on macOS/Linux")
+
+    result = subprocess.run(
+        [
+            libreoffice_binary,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(target_path.parent),
+            str(source_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0 or not target_path.exists():
+        raise ValueError("LibreOffice is required to render Word documents for OCR on macOS/Linux")
 
 
 def _build_os_path(base_path: str):

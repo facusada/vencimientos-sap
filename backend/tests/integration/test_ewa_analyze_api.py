@@ -22,10 +22,11 @@ class StubDocumentIntelligenceProvider(DocumentIntelligenceProvider):
         ]
 
 
-def test_post_ewa_analyze_returns_excel_file_for_docx():
+def test_post_ewa_analyze_returns_excel_file_for_docx(monkeypatch):
     app.dependency_overrides[get_document_intelligence_provider] = (
         lambda: StubDocumentIntelligenceProvider()
     )
+    monkeypatch.setattr("app.parsers.text_extractor._extract_docx_ocr_text", lambda payload: "")
 
     document = Document()
     document.add_paragraph("SAP Product Version is supported until 02.2027.")
@@ -79,12 +80,13 @@ def test_post_ewa_analyze_rejects_unsupported_extension():
     assert response.json()["detail"] == "Unsupported file type"
 
 
-def test_post_ewa_analyze_returns_clear_error_when_ai_finds_nothing():
+def test_post_ewa_analyze_returns_clear_error_when_ai_finds_nothing(monkeypatch):
     class EmptyProvider(DocumentIntelligenceProvider):
         def extract_expirations(self, text: str) -> list[dict[str, str]]:
             return []
 
     app.dependency_overrides[get_document_intelligence_provider] = lambda: EmptyProvider()
+    monkeypatch.setattr("app.parsers.text_extractor._extract_docx_ocr_text", lambda payload: "")
 
     document = Document()
     document.add_paragraph("This EWA contains recommendations but no support dates.")

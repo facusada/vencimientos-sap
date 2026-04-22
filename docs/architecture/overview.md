@@ -2,13 +2,13 @@
 
 ## Flujo principal
 
-`Word (.docx / .doc) -> text extractor -> document intelligence -> normalizer -> Excel exporter`
+`Word/PDF -> OCR + text extractor -> document intelligence -> normalizer -> Excel exporter`
 
 ## Capas
 
 - Frontend UI: app Vue 3 standalone para carga de archivos, feedback de estado y descarga del Excel.
 - Backend API: vive en `backend/app/`, recibe el archivo y traduce errores de dominio a respuestas HTTP.
-- Parsers: viven en `backend/app/parsers/`, extraen texto desde `.docx`, parsean `.doc` Word XML cuando aplica, o convierten `.doc` binario legado antes de extraer segun las capacidades del sistema operativo.
+- Parsers: viven en `backend/app/parsers/`, ejecutan OCR y extraen texto desde `.pdf` y `.docx`, parsean `.doc` Word XML cuando aplica, o convierten `.doc` binario legado antes de extraer segun las capacidades del sistema operativo.
 - Document intelligence: vive en `backend/app/services/` e interpreta semanticamente el contenido y devuelve hallazgos crudos `nombre` + `fecha`.
 - Normalizer: vive en `backend/app/` y valida fechas, resuelve `MM.YYYY`, normaliza a ISO y elimina duplicados exactos.
 - Excel exporter: vive en `backend/app/services/` y genera el workbook final con columnas `Nombre` y `Fecha`.
@@ -21,6 +21,7 @@
 - La implementacion por defecto sera local/fake para desarrollo y tests.
 - El diseño debe admitir proveedores futuros para OpenAI y Azure OpenAI.
 - La seleccion del proveedor y las credenciales deben resolverse por variables de entorno.
+- El OCR corre antes de la capa de document intelligence para enriquecer el contexto textual enviado al proveedor IA.
 
 ## Decisiones
 

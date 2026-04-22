@@ -2,10 +2,10 @@
 
 ## Objetivo
 
-Construir un servicio backend en Python con FastAPI orientado principalmente a documentos Word SAP EarlyWatch Alert (`.docx` y `.doc`) que:
+Construir un servicio backend en Python con FastAPI orientado a documentos SAP EarlyWatch Alert (`.docx`, `.doc` y `.pdf`) que:
 
 1. reciba el documento Word,
-2. extraiga su texto,
+2. aplique OCR como preprocesamiento y extraiga texto util,
 3. lo envíe a una capa de document intelligence/IA desacoplada,
 4. obtenga vencimientos y fechas relevantes normalizados,
 5. devuelva un archivo Excel descargable con tres columnas: `Seccion`, `Nombre` y `Fecha`.
@@ -14,7 +14,7 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 
 ### Incluido
 
-- Endpoint `POST /ewa/analyze` para recibir un archivo Word EWA.
+- Endpoint `POST /ewa/analyze` para recibir un archivo EWA Word o PDF.
 - Extraccion de texto desde `.docx`.
 - Procesamiento de `.doc` legado en formato Word 2003 XML mediante parseo directo, o conversion temporal en Windows / LibreOffice headless en macOS/Linux para `.doc` binario.
 - Capa de IA/document intelligence desacoplada del resto de la aplicacion.
@@ -23,7 +23,7 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 - Normalizacion de fechas a formato ISO `YYYY-MM-DD`.
 - Soporte para fechas expresadas como `DD.MM.YYYY`, `YYYY-MM-DD`, `YYYY/MM/DD` y `MM.YYYY`.
 - Soporte para tablas de EWA con columnas de mantenimiento o soporte vendor como `End of Standard Vendor Support*` y `End of Extended Vendor Support*`.
-- Fallback automatico con OCR para PDFs con poco texto extraible o documentos Word con imagenes embebidas cuando el extractor textual no sea suficiente.
+- OCR sistematico para documentos `.pdf`, `.docx` y `.doc` antes de enviar el contexto a IA.
 - Generacion de un archivo Excel `.xlsx` con columnas `Seccion`, `Nombre` y `Fecha`.
 - Formato visual del Excel para destacar vencimientos: amarillo suave para fechas ya vencidas y verde suave para fechas futuras o vigentes, manteniendo contraste legible.
 - Eliminacion de duplicados exactos por `nombre + fecha`.
@@ -33,13 +33,13 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 
 - Persistencia en base de datos.
 - Integracion real con SAP, BTP, Azure DevOps o almacenamiento cloud.
-- OCR como interpretacion visual avanzada del contenido; en esta iteracion solo se usara como fallback de extraccion textual.
+- Interpretacion visual avanzada adicional distinta del OCR textual base.
 - Autenticacion, autorizacion y multitenancy.
 - Integracion productiva con OpenAI o Azure OpenAI; solo se dejara la abstraccion lista.
 
 ## Flujo principal
 
-`Word (.docx / .doc) -> extraccion de texto -> document intelligence -> normalizacion -> Excel`
+`Word/PDF -> OCR + extraccion de texto -> document intelligence -> normalizacion -> Excel`
 
 ## Casos de uso
 
@@ -49,8 +49,8 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 4. La capa de document intelligence interpreta frases variadas como `valid until`, `maintenance until`, `supported until`, `end of maintenance` o `expires on`.
 5. La capa de document intelligence interpreta tablas EWA que expresan soporte vendor mediante columnas como `End of Standard Vendor Support*` y `End of Extended Vendor Support*`, aunque no exista una frase narrativa del tipo `supported until`.
 6. Si no se detectan hallazgos, el sistema no genera Excel y devuelve un mensaje claro al usuario indicando que el EWA no contiene fechas de vencimiento detectables.
-7. Si un PDF tiene poco o nada de texto extraible, el sistema intenta OCR automaticamente antes de fallar.
-8. Si un documento Word contiene imagenes embebidas, el sistema puede sumar el texto OCR detectado en esas imagenes al contexto enviado a IA.
+7. Si un analista carga un PDF, el sistema ejecuta OCR de sus paginas y suma ese resultado al texto extraible antes de invocar la IA.
+8. Si un analista carga un Word `.docx` o `.doc`, el sistema intenta renderizar el documento para OCR y suma ese resultado al contexto enviado a IA.
 
 ## Criterios de aceptacion
 
@@ -68,7 +68,7 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 12. Si el documento no puede procesarse, el endpoint debe responder con error `400`.
 13. El sistema debe exportar fechas de soporte vendor detectadas en tablas EWA aunque el componente aparezca antes o despues de las fechas dentro del bloque tabular extraido.
 14. El Excel debe resaltar visualmente cada fila segun el estado de la fecha normalizada: amarillo suave si la fecha ya vencio y verde suave si la fecha aun no vencio.
-15. El sistema debe activar OCR automaticamente cuando detecte PDFs con muy poco texto extraible o imagenes embebidas en documentos Word y el OCR este disponible.
+15. El sistema debe intentar OCR de forma sistematica para `.pdf`, `.docx` y `.doc` antes de invocar la capa de IA.
 
 ## Edge cases
 
@@ -90,7 +90,7 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 ### Arquitectura
 
 - `backend/app/api/` expondra el endpoint FastAPI.
-- `backend/app/parsers/` se enfocara en extraer texto desde Word.
+- `backend/app/parsers/` se enfocara en OCR y extraccion de texto desde Word/PDF.
 - `backend/app/services/document_intelligence.py` definira la interfaz y proveedores de IA.
 - `backend/app/services/ewa_analysis_service.py` orquestara extraccion, IA, normalizacion, deduplicacion y Excel.
 - `backend/app/services/excel_service.py` seguira dedicado a la exportacion.
@@ -111,7 +111,7 @@ Construir un servicio backend en Python con FastAPI orientado principalmente a d
 
 ## Decisiones de diseño iniciales
 
-- El parser de documento solo extrae texto; no decide vencimientos.
+- El parser de documento se encarga de OCR y extraccion de texto; no decide vencimientos.
 - La deteccion principal vive en una capa de IA/document intelligence.
 - El proveedor por defecto sera una implementacion fake/heuristica semanticamente orientada para desarrollo local y tests.
 - Azure OpenAI sera el proveedor externo objetivo para entornos reales.

@@ -1,15 +1,15 @@
 # Vencimientos SAP EWA
 
-Servicio FastAPI orientado a documentos Word SAP EarlyWatch Alert para detectar vencimientos mediante una capa de document intelligence y exportarlos a Excel.
+Servicio FastAPI orientado a documentos SAP EarlyWatch Alert para detectar vencimientos mediante una capa de OCR + document intelligence y exportarlos a Excel.
 
 ## Flujo
 
-`Word (.docx / .doc) -> extraccion de texto -> IA/document intelligence -> normalizacion -> Excel`
+`Word/PDF -> OCR + extraccion de texto -> IA/document intelligence -> normalizacion -> Excel`
 
 ## Estructura
 
 - `backend/app/api/`: endpoint HTTP.
-- `backend/app/parsers/`: extraccion de texto desde Word.
+- `backend/app/parsers/`: OCR y extraccion de texto desde Word/PDF.
 - `backend/app/services/document_intelligence.py`: interfaz y proveedores de IA.
 - `backend/app/services/ewa_analysis_service.py`: orquestacion del flujo.
 - `backend/app/services/excel_service.py`: exportacion Excel.
@@ -58,7 +58,7 @@ npm run dev
 5. Configurar Azure OpenAI:
 
 ```bash
-cp .env.example .env
+cp .env.example backend/.env
 ```
 
 Completar en tu entorno o shell estas variables:
@@ -68,7 +68,7 @@ Completar en tu entorno o shell estas variables:
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_DEPLOYMENT`
 
-OCR opcional con Tesseract:
+OCR con Tesseract:
 
 ```bash
 cd backend
@@ -81,7 +81,7 @@ Ademas, el equipo debe tener instalado el binario de Tesseract OCR. Si no queda 
 ## Endpoint
 
 - `POST /ewa/analyze`
-- Input principal: archivo `.docx` o `.doc`
+- Input principal: archivo `.docx`, `.doc` o `.pdf`
 - Output: archivo Excel `.xlsx` descargable con columnas `Seccion`, `Nombre` y `Fecha`
 
 ## Frontend
@@ -97,7 +97,7 @@ cd frontend
 npm test
 ```
 
-La API carga `.env` tanto desde la raiz del repo como desde `backend/.env`.
+La API carga `.env` desde `backend/.env` y tambien tolera ejecuciones que definan variables en el entorno del proceso.
 
 ## Capa de IA
 
