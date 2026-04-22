@@ -1,15 +1,15 @@
 # Vencimientos SAP EWA
 
-Servicio FastAPI orientado a documentos SAP EarlyWatch Alert para detectar vencimientos mediante una capa de OCR + document intelligence y exportarlos a Excel.
+Servicio FastAPI orientado a documentos SAP EarlyWatch Alert en PDF para detectar vencimientos mediante extraccion de texto + document intelligence y exportarlos a Excel.
 
 ## Flujo
 
-`Word/PDF -> OCR + extraccion de texto -> IA/document intelligence -> normalizacion -> Excel`
+`PDF -> extraccion estructurada (layout + tablas) -> IA/document intelligence -> normalizacion -> Excel`
 
 ## Estructura
 
 - `backend/app/api/`: endpoint HTTP.
-- `backend/app/parsers/`: OCR y extraccion de texto desde Word/PDF.
+- `backend/app/parsers/`: extraccion estructurada desde PDF con `pdfplumber`.
 - `backend/app/services/document_intelligence.py`: interfaz y proveedores de IA.
 - `backend/app/services/ewa_analysis_service.py`: orquestacion del flujo.
 - `backend/app/services/excel_service.py`: exportacion Excel.
@@ -68,21 +68,11 @@ Completar en tu entorno o shell estas variables:
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_DEPLOYMENT`
 
-OCR con Tesseract:
-
-```bash
-cd backend
-source .venv/Scripts/activate
-python -m pip install -e ".[ocr]"
-```
-
-Ademas, el equipo debe tener instalado el binario de Tesseract OCR. Si no queda en `PATH`, se puede definir `TESSERACT_CMD`.
-
 ## Endpoint
 
 - `POST /ewa/analyze`
-- Input principal: archivo `.docx`, `.doc` o `.pdf`
-- Output: archivo Excel `.xlsx` descargable con columnas `Seccion`, `Nombre` y `Fecha`
+- Input principal: archivo `.pdf` con texto extraible
+- Output: archivo Excel `.xlsx` descargable con columnas `Seccion`, `Nombre`, `Hito` y `Fecha`
 
 ## Frontend
 
@@ -99,23 +89,27 @@ npm test
 
 La API carga `.env` desde `backend/.env` y tambien tolera ejecuciones que definan variables en el entorno del proceso.
 
+## CI
+
+- El repositorio incluye GitHub Actions en [`.github/workflows/ci.yml`](/Users/facusada/Documents/projects/vencimientos-app/vencimientos-sap/.github/workflows/ci.yml:1).
+- El job `backend` instala el paquete desde `backend/` y ejecuta `python -m pytest`.
+- El job `frontend` ejecuta `npm ci`, `npm test` y `npm run build`.
+- En CI el backend fuerza `EWA_AI_PROVIDER=fake` para validar el flujo sin depender de credenciales externas.
+
 ## Capa de IA
 
 - El proveedor por defecto es `FakeSemanticDocumentIntelligence`.
 - La interfaz esta desacoplada para permitir proveedores futuros como OpenAI o Azure OpenAI.
 - La normalizacion de fechas y deduplicacion se realiza fuera del proveedor IA.
+- El parser PDF preserva mejor headers y contexto tabular serializando layout y filas de tabla antes de invocar document intelligence.
+- La reconciliacion de `Nombre` prioriza nombres especificos ya devueltos por la IA y usa heuristicas locales sobre todo para corregir nombres genericos o ruidosos.
+- La columna `Seccion` se resuelve en backend usando el bloque del componente detectado para reducir headings incorrectos como `SAP Kernel Release` en vencimientos de producto.
+- La columna `Hito` distingue vencimientos como `End of Standard Vendor Support` y `End of Extended Vendor Support` cuando el documento los explicita.
 - Para usar Azure OpenAI real, el proveedor se selecciona por variables de entorno.
-
-## Nota sobre Word legado
-
-- Los archivos `.doc` en formato Word 2003 XML se parsean directamente sin conversion externa.
-- En Windows, los archivos `.doc` se convierten usando Microsoft Word.
-- En macOS/Linux, los archivos `.doc` se convierten usando LibreOffice en modo headless.
-- Si el equipo donde corre la API no tiene disponible el conversor correspondiente, el endpoint responde `400`.
 
 ## Trazabilidad
 
 - Spec activa backend: `docs/sdd/wip/ewa-expiration-parser/spec.md`
 - Spec activa frontend: `docs/sdd/wip/ewa-upload-ui/spec.md`
-- Commit sugerido SDD: `feature(ewa-parser): redefinir flujo Word a IA para analisis EWA`
+- Commit sugerido SDD: `feature(ewa-parser): redefinir flujo PDF a IA para analisis EWA`
 - Commit sugerido implementacion: `feature(ewa-parser): implementar document intelligence para analisis EWA`

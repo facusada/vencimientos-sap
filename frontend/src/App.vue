@@ -43,7 +43,7 @@ function applyFile(file) {
 
   if (!isSupportedFile(file.name)) {
     selectedFile.value = null;
-    errorMessage.value = "Solo se admiten archivos .doc, .docx o .pdf.";
+    errorMessage.value = "Solo se admiten archivos .pdf.";
     if (fileInput.value) {
       fileInput.value.value = "";
     }
@@ -97,9 +97,7 @@ function openFilePicker() {
 }
 
 function isSupportedFile(filename) {
-  return [".doc", ".docx", ".pdf"].some((extension) =>
-    filename.toLowerCase().endsWith(extension),
-  );
+  return filename.toLowerCase().endsWith(".pdf");
 }
 
 function formatBytes(size) {
@@ -173,7 +171,7 @@ function triggerDownload(blob, filename) {
           ref="fileInput"
           class="sr-only"
           type="file"
-          accept=".doc,.docx,.pdf"
+          accept=".pdf"
           :disabled="isUploading"
           @change="onFileChange"
         />
@@ -194,20 +192,20 @@ function triggerDownload(blob, filename) {
             >
               {{ selectedFile ? "Cambiar archivo" : "Elegir archivo" }}
             </button>
-            <span class="dropzone__hint">Formatos soportados: .doc, .docx, .pdf</span>
+            <span class="dropzone__hint">Formato soportado: .pdf</span>
           </div>
           <p class="dropzone__note">
-            Recomendacion: si tienes el EWA en formato Word (.doc o .docx), suele dar una mejor extraccion la IA.
+            Formato soportado: PDF con texto extraible.
           </p>
         </div>
       </div>
 
       <section class="showcase">
-        <p class="showcase__kicker">Word → IA → Excel</p>
+        <p class="showcase__kicker">EWA → IA → Excel</p>
         <h1>Carga el EWA. Descarga el Excel.</h1>
         <p class="showcase__text">
           Un unico paso para transformar el reporte en una planilla simple con
-          <code>Nombre</code> y <code>Fecha</code>.
+          <code>Seccion</code>, <code>Nombre</code>, <code>Hito</code> y <code>Fecha</code>.
         </p>
       </section>
 
@@ -215,8 +213,16 @@ function triggerDownload(blob, filename) {
         <span class="result-card__label">Salida</span>
         <div class="result-card__sheet">
           <div>
+            <strong>Seccion</strong>
+            <span>Bloque del EWA</span>
+          </div>
+          <div>
             <strong>Nombre</strong>
             <span>Componente o producto</span>
+          </div>
+          <div>
+            <strong>Hito</strong>
+            <span>Tipo de vencimiento</span>
           </div>
           <div>
             <strong>Fecha</strong>

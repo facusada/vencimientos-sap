@@ -1,165 +1,65 @@
-from io import BytesIO
-from pathlib import Path
-import shutil
-import subprocess
-
 import pytest
-from docx import Document
 
-from app.parsers.text_extractor import _extract_doc_text
 from app.parsers.text_extractor import extract_text
 
 
-def test_extract_text_supports_docx_files(monkeypatch: pytest.MonkeyPatch):
-    document = Document()
-    document.add_paragraph("Kernel expiry: 2026-12-31")
-    document.add_paragraph("Certificate ABC valid until 31.12.2026")
-    table = document.add_table(rows=1, cols=2)
-    table.cell(0, 0).text = "SAP Product Version"
-    table.cell(0, 1).text = "supported until 02.2027"
-
-    buffer = BytesIO()
-    document.save(buffer)
-
-    monkeypatch.setattr("app.parsers.text_extractor._extract_docx_ocr_text", lambda payload: "")
-
-    result = extract_text("ewa.docx", buffer.getvalue())
-
-    assert "Kernel expiry: 2026-12-31" in result
-    assert "Certificate ABC valid until 31.12.2026" in result
-    assert "SAP Product Version" in result
-    assert "supported until 02.2027" in result
-
-
-def test_extract_text_always_appends_pdf_ocr_content(monkeypatch: pytest.MonkeyPatch):
+def test_extract_text_supports_pdf_files(monkeypatch: pytest.MonkeyPatch):
     class FakePage:
-        def extract_text(self) -> str:
-            return "Kernel expiry: 2026-12-31"
+        def extract_text(self, layout: bool = False) -> str:
+            return "4.6 Operating System(s) - Maintenance Phases\nSUSE Linux Enterprise"
 
-    class FakeReader:
+        def extract_tables(self) -> list[list[list[str]]]:
+            return [
+                [
+                    ["Host", "Operating System", "End of Standard Vendor Support"],
+                    ["2 Hosts", "SUSE Linux Enterprise Server 15 (x86_64)", "31.07.2028"],
+                ]
+            ]
+
+    class FakePdf:
         pages = [FakePage()]
 
-    monkeypatch.setattr("pypdf.PdfReader", lambda stream: FakeReader())
-    monkeypatch.setattr(
-        "app.parsers.text_extractor._extract_pdf_ocr_text",
-        lambda payload: "Screenshot table says valid until 31.12.2027",
-    )
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("pdfplumber.open", lambda stream: FakePdf())
 
     result = extract_text("ewa.pdf", b"fake-pdf")
 
-    assert "Kernel expiry: 2026-12-31" in result
-    assert "Screenshot table says valid until 31.12.2027" in result
+    assert "4.6 Operating System(s) - Maintenance Phases" in result
+    assert "Host | Operating System | End of Standard Vendor Support" in result
+    assert "2 Hosts | SUSE Linux Enterprise Server 15 (x86_64) | 31.07.2028" in result
 
 
-def test_extract_text_always_appends_docx_ocr_content(monkeypatch: pytest.MonkeyPatch):
-    document = Document()
-    document.add_paragraph("Kernel expiry: 2026-12-31")
+def test_extract_text_rejects_non_pdf_files():
+    with pytest.raises(ValueError, match="Unsupported file type"):
+        extract_text("ewa.docx", b"irrelevant")
 
-    buffer = BytesIO()
-    document.save(buffer)
-
-    monkeypatch.setattr(
-        "app.parsers.text_extractor._extract_docx_ocr_text",
-        lambda payload: "Rendered page says SQL Server 2012 12.07.2022",
-    )
-
-    result = extract_text("ewa.docx", buffer.getvalue())
-
-    assert "Kernel expiry: 2026-12-31" in result
-    assert "Rendered page says SQL Server 2012 12.07.2022" in result
+    with pytest.raises(ValueError, match="Unsupported file type"):
+        extract_text("ewa.doc", b"irrelevant")
 
 
-def test_extract_text_supports_doc_files_via_legacy_extractor(monkeypatch: pytest.MonkeyPatch):
-    def fake_extract_doc_text(payload: bytes) -> str:
-        assert payload == b"legacy-doc"
-        return "Kernel expiry: 2026-12-31"
+def test_extract_text_requires_extractable_pdf_text(monkeypatch: pytest.MonkeyPatch):
+    class FakePage:
+        def extract_text(self, layout: bool = False) -> str:
+            return ""
 
-    monkeypatch.setattr("app.parsers.text_extractor._extract_doc_text", fake_extract_doc_text)
+        def extract_tables(self) -> list[list[list[str]]]:
+            return []
 
-    result = extract_text("ewa.doc", b"legacy-doc")
+    class FakePdf:
+        pages = [FakePage()]
 
-    assert result == "Kernel expiry: 2026-12-31"
+        def __enter__(self):
+            return self
 
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
-def test_extract_doc_text_supports_word_2003_xml_without_external_converter(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    payload = b"""<?xml version="1.0"?>
-<?mso-application progid="Word.Document"?>
-<w:wordDocument xmlns:w="http://schemas.microsoft.com/office/word/2003/wordml">
-  <w:body>
-    <w:p><w:r><w:t>EHP7 FOR SAP ERP 6.0</w:t></w:r></w:p>
-    <w:p><w:r><w:t>31.12.2027</w:t></w:r></w:p>
-    <w:tbl>
-      <w:tr>
-        <w:tc><w:p><w:r><w:t>SAP NETWEAVER 7.4</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>31.12.2027</w:t></w:r></w:p></w:tc>
-      </w:tr>
-    </w:tbl>
-  </w:body>
-</w:wordDocument>
-"""
+    monkeypatch.setattr("pdfplumber.open", lambda stream: FakePdf())
 
-    monkeypatch.setattr(
-        "app.parsers.text_extractor._extract_office_document_ocr_text",
-        lambda payload, suffix: "",
-    )
-
-    result = _extract_doc_text(payload)
-
-    assert "EHP7 FOR SAP ERP 6.0" in result
-    assert "31.12.2027" in result
-    assert "SAP NETWEAVER 7.4" in result
-
-
-def test_extract_doc_text_appends_ocr_content_for_word_2003_xml(monkeypatch: pytest.MonkeyPatch):
-    payload = b"""<?xml version="1.0"?>
-<?mso-application progid="Word.Document"?>
-<w:wordDocument xmlns:w="http://schemas.microsoft.com/office/word/2003/wordml">
-  <w:body>
-    <w:p><w:r><w:t>EHP7 FOR SAP ERP 6.0</w:t></w:r></w:p>
-  </w:body>
-</w:wordDocument>
-"""
-
-    monkeypatch.setattr(
-        "app.parsers.text_extractor._extract_office_document_ocr_text",
-        lambda payload, suffix: "Rendered XML page says valid until 31.12.2027",
-    )
-
-    result = _extract_doc_text(payload)
-
-    assert "EHP7 FOR SAP ERP 6.0" in result
-    assert "Rendered XML page says valid until 31.12.2027" in result
-
-
-def test_extract_doc_text_supports_non_windows_via_libreoffice(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("app.parsers.text_extractor.os.name", "posix")
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/soffice")
-
-    def fake_run(command: list[str], capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
-        assert command[:4] == ["/usr/bin/soffice", "--headless", "--convert-to", "docx"]
-        outdir = Path(command[command.index("--outdir") + 1])
-        converted = outdir / "input.docx"
-        converted.write_bytes(b"converted-docx")
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        "app.parsers.text_extractor._extract_docx_text",
-        lambda payload: "Kernel expiry: 2026-12-31" if payload == b"converted-docx" else "",
-    )
-
-    result = _extract_doc_text(b"legacy-doc")
-
-    assert result == "Kernel expiry: 2026-12-31"
-
-
-def test_extract_doc_text_requires_supported_converter_on_non_windows(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr("app.parsers.text_extractor.os.name", "posix")
-    monkeypatch.setattr(shutil, "which", lambda name: None)
-
-    with pytest.raises(ValueError, match="LibreOffice is required to process legacy .doc files"):
-        _extract_doc_text(b"legacy-doc")
+    with pytest.raises(ValueError, match="PDF does not contain extractable text"):
+        extract_text("ewa.pdf", b"fake-pdf")

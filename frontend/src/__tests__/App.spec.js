@@ -33,12 +33,7 @@ describe("App upload flow", () => {
 
     expect(button.attributes("disabled")).toBeDefined();
 
-    await selectFile(
-      wrapper,
-      new File(["ewa"], "ewa.docx", {
-        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      }),
-    );
+    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
 
     expect(button.attributes("disabled")).toBeUndefined();
   });
@@ -49,14 +44,15 @@ describe("App upload flow", () => {
     await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
 
     expect(wrapper.text()).toContain("ewa.pdf");
-    expect(wrapper.text()).toContain("Recomendacion: si tienes el EWA en formato Word (.doc o .docx)");
+    expect(wrapper.text()).toContain("EWA → IA → Excel");
+    expect(wrapper.text()).toContain("Formato soportado: PDF con texto extraible");
   });
 
   it("shows a validation message for unsupported files", async () => {
     const wrapper = mount(App);
     await selectFile(wrapper, new File(["bad"], "ewa.csv", { type: "text/csv" }));
 
-    expect(wrapper.text()).toContain("Solo se admiten archivos .doc, .docx o .pdf.");
+    expect(wrapper.text()).toContain("Solo se admiten archivos .pdf.");
   });
 
   it("posts the selected file and triggers the Excel download", async () => {
@@ -69,7 +65,7 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.doc", { type: "application/msword" }));
+    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
 
     await wrapper.get("form").trigger("submit.prevent");
 
@@ -109,7 +105,7 @@ describe("App upload flow", () => {
 
   it("renders backend error detail when the request fails", async () => {
     vi.spyOn(window, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "LibreOffice is required to process legacy .doc files on macOS/Linux" }), {
+      new Response(JSON.stringify({ detail: "PDF does not contain extractable text" }), {
         status: 400,
         headers: {
           "Content-Type": "application/json",
@@ -118,12 +114,12 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.doc", { type: "application/msword" }));
+    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
 
     await wrapper.get("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("LibreOffice is required to process legacy .doc files on macOS/Linux");
+    expect(wrapper.text()).toContain("PDF does not contain extractable text");
   });
 
   it("shows a clear message when the EWA has no expiration dates", async () => {

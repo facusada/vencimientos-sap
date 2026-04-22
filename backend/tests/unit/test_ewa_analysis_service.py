@@ -1,4 +1,5 @@
 from app.services.document_intelligence import DocumentIntelligenceProvider
+from app.services.ewa_analysis_service import _is_section_heading
 from app.services.ewa_analysis_service import build_expiration_records
 
 
@@ -22,10 +23,10 @@ def test_build_expiration_records_normalizes_and_deduplicates():
     )
 
     assert [
-        (item.source_section, item.name, item.expiration_date) for item in result
+        (item.source_section, item.name, item.expiration_date, item.milestone) for item in result
     ] == [
-        ("", "SAP Product Version", "2027-02-28"),
-        ("", "Kernel", "2026-12-31"),
+        ("", "SAP Product Version", "2027-02-28", ""),
+        ("", "Kernel", "2026-12-31", ""),
     ]
 
 
@@ -44,8 +45,8 @@ def test_build_expiration_records_reconciles_hallucinated_name_with_source_text(
         provider,
     )
 
-    assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
-        ("", "SAP Product Version", "2027-12-31"),
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("", "SAP Product Version", "2027-12-31", ""),
     ]
 
 
@@ -54,6 +55,22 @@ class GenericEWANameProvider(DocumentIntelligenceProvider):
         return [
             {"nombre": "Your main product version", "fecha": "31.12.2027"},
             {"nombre": "Your SAP NetWeaver version", "fecha": "31.12.2027"},
+        ]
+
+
+class SpecificProductNameProvider(DocumentIntelligenceProvider):
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        return [
+            {"nombre": "EHP7 FOR SAP ERP 6.0", "fecha": "31.12.2027"},
+            {"nombre": "SAP NETWEAVER 7.4", "fecha": "31.12.2027"},
+        ]
+
+
+class StructuredPdfNameProvider(DocumentIntelligenceProvider):
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        return [
+            {"nombre": "SAP Fiori Front-End Server", "fecha": "31.12.2027"},
+            {"nombre": "SUSE Linux Enterprise Server 15 (x86_64)", "fecha": "31.07.2028"},
         ]
 
 
@@ -79,9 +96,85 @@ def test_build_expiration_records_prefers_structured_product_names_from_ewa_tabl
 
     result = build_expiration_records(text, provider)
 
-    assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
-        ("SAP Application Release - Maintenance Phases", "EHP7 FOR SAP ERP 6.0", "2027-12-31"),
-        ("SAP Application Release - Maintenance Phases", "SAP NETWEAVER 7.4", "2027-12-31"),
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("SAP Application Release - Maintenance Phases", "EHP7 FOR SAP ERP 6.0", "2027-12-31", ""),
+        ("SAP Application Release - Maintenance Phases", "SAP NETWEAVER 7.4", "2027-12-31", ""),
+    ]
+
+
+def test_build_expiration_records_keeps_specific_ai_names_when_pdf_text_is_layout_collapsed():
+    provider = StructuredPdfNameProvider()
+    text = """
+    4.2 Maintenance and Update Strategy for SAP Fiori Front-End Server
+    SoftwareProduct SAP_UIRelease EndofMaintenance Rating
+    SAPFioriFES6.0 | 754 | 31.12.2027 |
+
+    4.6 Operating System(s) - Maintenance Phases
+    Host | OperatingSystem | EndofStandard VendorSupport* | EndofExtendedVendor Support* | Comment
+    2Hosts | SUSELinuxEnterprise Server15(x86_64) | 31.07.2028 | 31.07.2031 | Limited(LTSS)
+    """
+
+    result = build_expiration_records(text, provider)
+
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("", "SAP Fiori Front-End Server", "2027-12-31", ""),
+        ("4.6 Operating System(s) - Maintenance Phases", "SUSE Linux Enterprise Server 15 (x86_64)", "2028-07-31", ""),
+    ]
+
+
+def test_build_expiration_records_prefers_component_block_section_over_later_kernel_heading():
+    provider = SpecificProductNameProvider()
+    text = """
+    SAP Application Release - Maintenance Phases
+    SAP Product Version
+    Status
+    EHP7 FOR SAP ERP 6.0
+
+    SAP NetWeaver Version
+    Status
+    SAP NETWEAVER 7.4
+
+    SAP Kernel Release
+    Instance(s)
+    SAP Kernel Release
+    Patch Level
+    Age in Months
+    srv-pr-uap-h_UAP_00
+    749
+    500
+    97
+
+    EHP7 FOR SAP ERP 6.0 is supported until 31.12.2027.
+    SAP NETWEAVER 7.4 is supported in combination with your main product version until 31.12.2027.
+    """
+
+    result = build_expiration_records(text, provider)
+
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("SAP Application Release - Maintenance Phases", "EHP7 FOR SAP ERP 6.0", "2027-12-31", ""),
+        ("SAP Application Release - Maintenance Phases", "SAP NETWEAVER 7.4", "2027-12-31", ""),
+    ]
+
+
+class KernelProvider(DocumentIntelligenceProvider):
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        return [
+            {"nombre": "SAP Kernel 7.49", "fecha": "2026-12-31"},
+        ]
+
+
+def test_build_expiration_records_keeps_kernel_section_for_kernel_findings():
+    text = """
+    SAP Kernel Release
+    SAP Kernel 7.49
+    End of Mainstream Maintenance
+    2026-12-31
+    """
+
+    result = build_expiration_records(text, KernelProvider())
+
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("SAP Kernel Release", "SAP Kernel 7.49", "2026-12-31", ""),
     ]
 
 
@@ -96,7 +189,7 @@ class HANAFalsePositiveProvider(DocumentIntelligenceProvider):
         ]
 
 
-def test_build_expiration_records_filters_analysis_dates_and_reclassifies_os_support_dates():
+def test_build_expiration_records_filters_analysis_dates_while_preserving_specific_ai_names():
     provider = HANAFalsePositiveProvider()
     text = """
     HANA Database Support Package Stack for HEP
@@ -129,10 +222,10 @@ def test_build_expiration_records_filters_analysis_dates_and_reclassifies_os_sup
 
     result = build_expiration_records(text, provider)
 
-    assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
-        ("HANA Database Support Package Stack for HEP", "SAP HANA Database", "2023-12-31"),
-        ("Operating System(s) - Maintenance Phases", "Red Hat Enterprise Linux 8 (x86_64)", "2029-05-31"),
-        ("Operating System(s) - Maintenance Phases", "Red Hat Enterprise Linux 8 (x86_64)", "2031-05-31"),
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("HANA Database Support Package Stack for HEP", "SAP HANA Database", "2023-12-31", ""),
+        ("Operating System(s) - Maintenance Phases", "SAP HANA Database", "2029-05-31", ""),
+        ("Operating System(s) - Maintenance Phases", "SAP HANA Database", "2031-05-31", ""),
     ]
 
 
@@ -164,8 +257,8 @@ def test_build_expiration_records_rejects_rating_legend_text_as_component_name()
 
     result = build_expiration_records(text, provider)
 
-    assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
-        ("SAP Application Release - Maintenance Phases", "EHP8 FOR SAP ERP 6.0", "2027-12-31"),
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("SAP Application Release - Maintenance Phases", "EHP8 FOR SAP ERP 6.0", "2027-12-31", ""),
     ]
 
 
@@ -201,17 +294,110 @@ def test_build_expiration_records_keeps_vendor_support_dates_from_ewa_overview_t
     class VendorSupportProvider(DocumentIntelligenceProvider):
         def extract_expirations(self, text: str) -> list[dict[str, str]]:
             return [
-                {"nombre": "SQL Server 2012", "fecha": "11.07.2017"},
-                {"nombre": "SQL Server 2012", "fecha": "12.07.2022"},
-                {"nombre": "Operating System", "fecha": "09.01.2018"},
-                {"nombre": "Operating System", "fecha": "10.10.2023"},
+                {
+                    "nombre": "SQL Server 2012",
+                    "fecha": "11.07.2017",
+                    "hito": "End of Standard Vendor Support",
+                },
+                {
+                    "nombre": "SQL Server 2012",
+                    "fecha": "12.07.2022",
+                    "hito": "End of Extended Vendor Support",
+                },
+                {
+                    "nombre": "Operating System",
+                    "fecha": "09.01.2018",
+                    "hito": "End of Standard Vendor Support",
+                },
+                {
+                    "nombre": "Operating System",
+                    "fecha": "10.10.2023",
+                    "hito": "End of Extended Vendor Support",
+                },
             ]
 
     result = build_expiration_records(text, VendorSupportProvider())
 
-    assert [(item.source_section, item.name, item.expiration_date) for item in result] == [
-        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2017-07-11"),
-        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2022-07-12"),
-        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2018-01-09"),
-        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2023-10-10"),
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2017-07-11", "End of Standard Vendor Support"),
+        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2022-07-12", "End of Extended Vendor Support"),
+        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2018-01-09", "End of Standard Vendor Support"),
+        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2023-10-10", "End of Extended Vendor Support"),
+    ]
+
+
+def test_build_expiration_records_prefers_word_table_row_component_for_os_vendor_dates():
+    class OperatingSystemProvider(DocumentIntelligenceProvider):
+        def extract_expirations(self, text: str) -> list[dict[str, str]]:
+            assert "srv-pr-uap-h | Windows Server 2012 R2 | 09.01.2018 | 10.10.2023" in text
+            return [
+                {"nombre": "Operating System", "fecha": "09.01.2018", "hito": "End of Standard Vendor Support"},
+                {"nombre": "Operating System", "fecha": "10.10.2023", "hito": "End of Extended Vendor Support"},
+            ]
+
+    text = """
+    Operating System(s) - Maintenance Phases
+    Host
+    Operating System
+    End of Standard Vendor Support*
+    End of Extended Vendor Support*
+    srv-pr-uap-h | Windows Server 2012 R2 | 09.01.2018 | 10.10.2023
+
+    SAP Kernel Release
+    The following table lists all information about your SAP kernel(s) currently in use.
+    """
+
+    result = build_expiration_records(text, OperatingSystemProvider())
+
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("Operating System(s) - Maintenance Phases", "Windows Server 2012 R2", "2018-01-09", "End of Standard Vendor Support"),
+        ("Operating System(s) - Maintenance Phases", "Windows Server 2012 R2", "2023-10-10", "End of Extended Vendor Support"),
+    ]
+
+
+def test_is_section_heading_rejects_recommendation_sentence_with_support_package_stack_phrase():
+    line = (
+        "You should only consider using a more recent SAP kernel patch than that shipped with the "
+        "latest Support Package Stack for your product if specific errors occur."
+    )
+
+    assert _is_section_heading(line) is False
+
+
+def test_build_expiration_records_does_not_use_recommendation_sentence_as_section():
+    class VendorSupportProvider(DocumentIntelligenceProvider):
+        def extract_expirations(self, text: str) -> list[dict[str, str]]:
+            return [
+                {"nombre": "SQL Server 2012", "fecha": "11.07.2017", "hito": "End of Standard Vendor Support"},
+                {"nombre": "Windows Server 2012 R2", "fecha": "09.01.2018", "hito": "End of Standard Vendor Support"},
+                {"nombre": "EHP7 FOR SAP ERP 6.0", "fecha": "31.12.2027"},
+            ]
+
+    text = """
+    4.5 Database - Maintenance Phases
+    Database Version
+    End of Standard Vendor Support*
+    SQL Server 2012
+    11.07.2017
+
+    4.6 Operating System(s) - Maintenance Phases
+    Host
+    Operating System
+    End of Standard Vendor Support*
+    srv-pr-uap-h | Windows Server 2012 R2 | 09.01.2018 | 10.10.2023
+
+    4.6.2 Additional Remarks
+    You should only consider using a more recent SAP kernel patch than that shipped with the latest Support Package Stack for your product if specific errors occur.
+
+    4.1 SAP Application Release - Maintenance Phases
+    EHP7 FOR SAP ERP 6.0
+    31.12.2027
+    """
+
+    result = build_expiration_records(text, VendorSupportProvider())
+
+    assert [(item.source_section, item.name) for item in result] == [
+        ("4.5 Database - Maintenance Phases", "SQL Server 2012"),
+        ("4.6 Operating System(s) - Maintenance Phases", "Windows Server 2012 R2"),
+        ("4.1 SAP Application Release - Maintenance Phases", "EHP7 FOR SAP ERP 6.0"),
     ]

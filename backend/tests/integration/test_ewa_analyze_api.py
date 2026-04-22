@@ -1,6 +1,5 @@
 from io import BytesIO
 
-from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
@@ -17,32 +16,32 @@ class StubDocumentIntelligenceProvider(DocumentIntelligenceProvider):
         assert "supported until 02.2027" in text
         return [
             {"nombre": "SAP Product Version", "fecha": "02.2027"},
-            {"nombre": "Kernel", "fecha": "2026-12-31"},
-            {"nombre": "Kernel", "fecha": "2026-12-31"},
+            {"nombre": "Kernel", "fecha": "2026-12-31", "hito": "End of Standard Vendor Support"},
+            {"nombre": "Kernel", "fecha": "2026-12-31", "hito": "End of Standard Vendor Support"},
         ]
 
 
-def test_post_ewa_analyze_returns_excel_file_for_docx(monkeypatch):
+def test_post_ewa_analyze_returns_excel_file_for_pdf(monkeypatch):
     app.dependency_overrides[get_document_intelligence_provider] = (
         lambda: StubDocumentIntelligenceProvider()
     )
-    monkeypatch.setattr("app.parsers.text_extractor._extract_docx_ocr_text", lambda payload: "")
-
-    document = Document()
-    document.add_paragraph("SAP Product Version is supported until 02.2027.")
-    document.add_paragraph("Kernel expires on 2026-12-31.")
-
-    buffer = BytesIO()
-    document.save(buffer)
+    monkeypatch.setattr(
+        "app.services.ewa_analysis_service.extract_text",
+        lambda filename, payload: (
+            "SAP Product Version is supported until 02.2027.\nKernel expires on 2026-12-31."
+            if filename == "ewa.pdf" and payload == b"fake-pdf"
+            else ""
+        ),
+    )
 
     try:
         response = client.post(
             "/ewa/analyze",
             files={
                 "file": (
-                    "ewa.docx",
-                    buffer.getvalue(),
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "ewa.pdf",
+                    b"fake-pdf",
+                    "application/pdf",
                 )
             },
         )
@@ -61,13 +60,16 @@ def test_post_ewa_analyze_returns_excel_file_for_docx(monkeypatch):
 
     assert sheet["A1"].value == "Seccion"
     assert sheet["B1"].value == "Nombre"
-    assert sheet["C1"].value == "Fecha"
+    assert sheet["C1"].value == "Hito"
+    assert sheet["D1"].value == "Fecha"
     assert sheet["A2"].value is None
     assert sheet["B2"].value == "SAP Product Version"
-    assert sheet["C2"].value == "2027-02-28"
+    assert sheet["C2"].value is None
+    assert sheet["D2"].value == "2027-02-28"
     assert sheet["A3"].value is None
     assert sheet["B3"].value == "Kernel"
-    assert sheet["C3"].value == "2026-12-31"
+    assert sheet["C3"].value == "End of Standard Vendor Support"
+    assert sheet["D3"].value == "2026-12-31"
 
 
 def test_post_ewa_analyze_rejects_unsupported_extension():
@@ -86,22 +88,23 @@ def test_post_ewa_analyze_returns_clear_error_when_ai_finds_nothing(monkeypatch)
             return []
 
     app.dependency_overrides[get_document_intelligence_provider] = lambda: EmptyProvider()
-    monkeypatch.setattr("app.parsers.text_extractor._extract_docx_ocr_text", lambda payload: "")
-
-    document = Document()
-    document.add_paragraph("This EWA contains recommendations but no support dates.")
-
-    buffer = BytesIO()
-    document.save(buffer)
+    monkeypatch.setattr(
+        "app.services.ewa_analysis_service.extract_text",
+        lambda filename, payload: (
+            "This EWA contains recommendations but no support dates."
+            if filename == "ewa.pdf" and payload == b"fake-pdf"
+            else ""
+        ),
+    )
 
     try:
         response = client.post(
             "/ewa/analyze",
             files={
                 "file": (
-                    "ewa.docx",
-                    buffer.getvalue(),
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "ewa.pdf",
+                    b"fake-pdf",
+                    "application/pdf",
                 )
             },
         )
@@ -112,42 +115,17 @@ def test_post_ewa_analyze_returns_clear_error_when_ai_finds_nothing(monkeypatch)
     assert response.json()["detail"] == "No se detectaron fechas de vencimiento en el EWA enviado."
 
 
-def test_post_ewa_analyze_returns_excel_file_for_doc(monkeypatch):
-    class LegacyStubProvider(DocumentIntelligenceProvider):
-        def extract_expirations(self, text: str) -> list[dict[str, str]]:
-            assert "legacy doc content" in text
-            return [{"nombre": "Kernel", "fecha": "2026-12-31"}]
-
-    app.dependency_overrides[get_document_intelligence_provider] = (
-        lambda: LegacyStubProvider()
-    )
-    monkeypatch.setattr(
-        "app.services.ewa_analysis_service.extract_text",
-        lambda filename, payload: "legacy doc content" if filename == "ewa.doc" and payload == b"legacy-doc" else "",
+def test_post_ewa_analyze_rejects_non_pdf_input():
+    response = client.post(
+        "/ewa/analyze",
+        files={
+            "file": (
+                "ewa.docx",
+                b"legacy-docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
     )
 
-    try:
-        response = client.post(
-            "/ewa/analyze",
-            files={
-                "file": (
-                    "ewa.doc",
-                    b"legacy-doc",
-                    "application/msword",
-                )
-            },
-        )
-    finally:
-        app.dependency_overrides.clear()
-
-    assert response.status_code == 200
-
-    workbook = load_workbook(filename=BytesIO(response.content))
-    sheet = workbook.active
-
-    assert sheet["A1"].value == "Seccion"
-    assert sheet["B1"].value == "Nombre"
-    assert sheet["C1"].value == "Fecha"
-    assert sheet["A2"].value is None
-    assert sheet["B2"].value == "Kernel"
-    assert sheet["C2"].value == "2026-12-31"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unsupported file type"

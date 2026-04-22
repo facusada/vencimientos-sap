@@ -19,9 +19,9 @@ def test_fake_document_intelligence_detects_varied_phrasings():
 
     result = provider.extract_expirations(text)
 
-    assert {"nombre": "SAP Product Version for ECC 6.0", "fecha": "02.2027"} in result
-    assert {"nombre": "The system kernel", "fecha": "2026-12-31"} in result
-    assert {"nombre": "SSL Server PSE certificate", "fecha": "31.01.2028"} in result
+    assert {"nombre": "SAP Product Version for ECC 6.0", "fecha": "02.2027", "hito": ""} in result
+    assert {"nombre": "The system kernel", "fecha": "2026-12-31", "hito": ""} in result
+    assert {"nombre": "SSL Server PSE certificate", "fecha": "31.01.2028", "hito": ""} in result
 
 
 def test_fake_document_intelligence_detects_vendor_support_dates_from_ewa_tables():
@@ -54,10 +54,26 @@ def test_fake_document_intelligence_detects_vendor_support_dates_from_ewa_tables
 
     result = provider.extract_expirations(text)
 
-    assert {"nombre": "SQL Server 2012", "fecha": "11.07.2017"} in result
-    assert {"nombre": "SQL Server 2012", "fecha": "12.07.2022"} in result
-    assert {"nombre": "Operating System", "fecha": "09.01.2018"} in result
-    assert {"nombre": "Operating System", "fecha": "10.10.2023"} in result
+    assert {
+        "nombre": "SQL Server 2012",
+        "fecha": "11.07.2017",
+        "hito": "End of Standard Vendor Support",
+    } in result
+    assert {
+        "nombre": "SQL Server 2012",
+        "fecha": "12.07.2022",
+        "hito": "End of Extended Vendor Support",
+    } in result
+    assert {
+        "nombre": "Operating System",
+        "fecha": "09.01.2018",
+        "hito": "End of Standard Vendor Support",
+    } in result
+    assert {
+        "nombre": "Operating System",
+        "fecha": "10.10.2023",
+        "hito": "End of Extended Vendor Support",
+    } in result
 
 
 def test_azure_openai_document_intelligence_parses_json_response():
@@ -71,7 +87,7 @@ def test_azure_openai_document_intelligence_parses_json_response():
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(
-                    content='{"items":[{"nombre":"Kernel","fecha":"2026-12-31"},{"nombre":"SAP Product Version","fecha":"02.2027"}]}'
+                    content='{"items":[{"nombre":"Kernel","fecha":"2026-12-31","hito":"End of Extended Vendor Support"},{"nombre":"SAP Product Version","fecha":"02.2027","hito":""}]}'
                 )
             )
         ]
@@ -98,11 +114,12 @@ def test_azure_openai_document_intelligence_parses_json_response():
 
     assert captured_kwargs["response_format"] == {"type": "json_object"}
     assert "BEGIN_DOCUMENT" in captured_kwargs["messages"][1]["content"]
+    assert '"hito":"End of Standard Vendor Support or End of Extended Vendor Support when present, otherwise empty string"' in captured_kwargs["messages"][0]["content"]
     assert "Use only component names that appear in the document text" in captured_kwargs["messages"][1]["content"]
     assert "Ignore analysis windows" in captured_kwargs["messages"][1]["content"]
     assert result == [
-        {"nombre": "Kernel", "fecha": "2026-12-31"},
-        {"nombre": "SAP Product Version", "fecha": "02.2027"},
+        {"nombre": "Kernel", "fecha": "2026-12-31", "hito": "End of Extended Vendor Support"},
+        {"nombre": "SAP Product Version", "fecha": "02.2027", "hito": ""},
     ]
 
 
@@ -136,7 +153,7 @@ def test_azure_openai_document_intelligence_extracts_json_from_markdown_fence():
 
     result = provider.extract_expirations("Kernel expires on 2026-12-31.")
 
-    assert result == [{"nombre": "Kernel", "fecha": "2026-12-31"}]
+    assert result == [{"nombre": "Kernel", "fecha": "2026-12-31", "hito": ""}]
 
 
 def test_azure_openai_document_intelligence_extracts_json_when_wrapped_in_text():
@@ -169,7 +186,7 @@ def test_azure_openai_document_intelligence_extracts_json_when_wrapped_in_text()
 
     result = provider.extract_expirations("Kernel expires on 2026-12-31.")
 
-    assert result == [{"nombre": "Kernel", "fecha": "2026-12-31"}]
+    assert result == [{"nombre": "Kernel", "fecha": "2026-12-31", "hito": ""}]
 
 
 def test_create_document_intelligence_provider_builds_azure_provider_from_settings():

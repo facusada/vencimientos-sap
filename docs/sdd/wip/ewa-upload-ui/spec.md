@@ -4,7 +4,7 @@
 
 Construir un frontend en Vue 3 para el flujo de analisis EWA que:
 
-1. permita cargar archivos `.docx` y `.doc`,
+1. permita cargar archivos `.pdf`,
 2. invoque `POST /ewa/analyze`,
 3. muestre estados de carga, error y exito,
 4. descargue el Excel generado por el backend,
@@ -16,7 +16,7 @@ Construir un frontend en Vue 3 para el flujo de analisis EWA que:
 
 - Aplicacion Vue 3 standalone dentro del mismo repositorio.
 - Pantalla unica para carga por click o drag-and-drop.
-- Validacion basica de extensiones `.doc` y `.docx`.
+- Validacion basica de extension `.pdf`.
 - Llamada HTTP al endpoint `POST /ewa/analyze`.
 - Descarga del archivo `.xlsx` devuelto por la API.
 - Estados visibles de `idle`, `uploading`, `success` y `error`.
@@ -37,15 +37,14 @@ Construir un frontend en Vue 3 para el flujo de analisis EWA que:
 
 ## Casos de uso
 
-1. Un analista arrastra un `.docx`, ejecuta el analisis y descarga el Excel.
-2. Un analista selecciona un `.doc` soportado y descarga el Excel resultante.
-3. Si el archivo no es valido, la UI informa el error antes de enviar.
-4. Si la API devuelve `400`, la UI muestra el mensaje funcional del backend.
+1. Un analista arrastra un `.pdf`, ejecuta el analisis y descarga el Excel.
+2. Si el archivo no es valido, la UI informa el error antes de enviar.
+3. Si la API devuelve `400`, la UI muestra el mensaje funcional del backend.
 
 ## Criterios de aceptacion
 
 1. La UI debe permitir seleccionar un archivo por input y por drag-and-drop.
-2. Solo deben aceptarse `.doc` y `.docx`.
+2. Solo deben aceptarse `.pdf`.
 3. El boton principal debe quedar deshabilitado mientras no haya archivo o mientras haya una carga en curso.
 4. Durante la carga debe mostrarse un estado visual inequívoco.
 5. Al responder `200`, la UI debe descargar el Excel sin pasos manuales adicionales.

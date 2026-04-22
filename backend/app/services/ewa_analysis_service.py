@@ -3,6 +3,8 @@ import re
 
 from app.models.expiration import ExpirationRecord
 from app.models.expiration import RawExpirationFinding
+from app.services.document_intelligence import _collect_following_full_dates
+from app.services.document_intelligence import _extract_following_operating_system_dates
 from app.services.document_intelligence import _infer_component_name
 from app.parsers.text_extractor import extract_text
 from app.services.document_intelligence import (
@@ -111,18 +113,19 @@ def build_expiration_records(
     raw_items = provider.extract_expirations(text)
     findings = _coerce_raw_findings(raw_items)
     deduplicated: list[ExpirationRecord] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
 
     for finding in findings:
         resolved_name = _resolve_finding_name(text, finding)
-        resolved_section = _resolve_finding_section(text, finding.raw_date)
+        resolved_section = _resolve_finding_section(text, finding.raw_date, resolved_name)
+        resolved_milestone = _resolve_finding_milestone(text, finding, resolved_name)
         normalized = normalize_date(finding.raw_date)
         if normalized is None:
             continue
         if not _should_export_finding(text, finding, resolved_name):
             continue
 
-        key = (resolved_name, normalized.isoformat())
+        key = (resolved_name, normalized.isoformat(), resolved_milestone)
         if key in seen:
             continue
 
@@ -132,6 +135,7 @@ def build_expiration_records(
                 source_section=resolved_section,
                 name=resolved_name,
                 expiration_date=normalized.isoformat(),
+                milestone=resolved_milestone,
             )
         )
 
@@ -144,16 +148,20 @@ def _coerce_raw_findings(raw_items: Iterable[dict[str, str]]) -> list[RawExpirat
     for item in raw_items:
         name = item.get("nombre", "").strip()
         raw_date = item.get("fecha", "").strip()
+        milestone = item.get("hito", "").strip()
         if not name or not raw_date:
             continue
 
-        findings.append(RawExpirationFinding(name=name, raw_date=raw_date))
+        findings.append(RawExpirationFinding(name=name, raw_date=raw_date, milestone=milestone))
 
     return findings
 
 
 def _resolve_finding_name(text: str, finding: RawExpirationFinding) -> str:
     suggested_name = finding.name.strip()
+    if _should_preserve_suggested_name(suggested_name):
+        return suggested_name
+
     candidates = _find_source_candidates(
         text,
         finding.raw_date,
@@ -164,6 +172,7 @@ def _resolve_finding_name(text: str, finding: RawExpirationFinding) -> str:
     if matched_candidate:
         return matched_candidate
 
+    inferred_name = _infer_name_from_source_text(text, finding.raw_date)
     if (
         suggested_name
         and suggested_name in text
@@ -173,7 +182,6 @@ def _resolve_finding_name(text: str, finding: RawExpirationFinding) -> str:
     ):
         return suggested_name
 
-    inferred_name = _infer_name_from_source_text(text, finding.raw_date)
     if inferred_name:
         return inferred_name
 
@@ -186,9 +194,39 @@ def _infer_name_from_source_text(text: str, raw_date: str) -> str:
         if not stripped_line or raw_date not in stripped_line:
             continue
 
+        if "|" in stripped_line:
+            inferred_table_name = _infer_component_name_from_table_row(stripped_line, raw_date)
+            if inferred_table_name:
+                return inferred_table_name
+
         inferred_name = _infer_component_name(stripped_line, stripped_line.index(raw_date)).strip()
         if inferred_name:
             return inferred_name
+
+    return ""
+
+
+def _infer_component_name_from_table_row(line: str, raw_date: str) -> str:
+    cells = [cell.strip(" .:-") for cell in line.split("|")]
+    if raw_date not in cells:
+        return ""
+
+    date_index = cells.index(raw_date)
+    if date_index <= 0:
+        return ""
+
+    for candidate in reversed(cells[:date_index]):
+        if (
+            not candidate
+            or _looks_like_date(candidate)
+            or _is_header_like(candidate)
+            or _is_invalid_candidate_name(candidate)
+            or re.search(r"\d+\s+hosts?$", candidate.lower())
+            or candidate.lower().startswith("srv-")
+            or candidate.lower().startswith("host ")
+        ):
+            continue
+        return candidate
 
     return ""
 
@@ -308,6 +346,31 @@ def _is_generic_component_name(name: str) -> bool:
     return any(hint in normalized for hint in GENERIC_NAME_HINTS)
 
 
+def _should_preserve_suggested_name(name: str) -> bool:
+    normalized = name.strip()
+    if not normalized:
+        return False
+    if _is_generic_component_name(normalized) or _is_invalid_candidate_name(normalized):
+        return False
+
+    component_hints = (
+        "sap",
+        "hana",
+        "netweaver",
+        "fiori",
+        "kernel",
+        "linux",
+        "windows",
+        "server",
+        "database",
+        "oracle",
+        "sql",
+        "package",
+    )
+    lowered = normalized.lower()
+    return _is_component_like_name(normalized) and any(hint in lowered for hint in component_hints)
+
+
 def _is_header_like(line: str) -> bool:
     normalized = line.strip().lower()
     return normalized in HEADER_HINTS
@@ -327,6 +390,7 @@ def _tokenize_name(value: str) -> set[str]:
 
 def _is_invalid_candidate_name(candidate_name: str) -> bool:
     normalized = candidate_name.strip().lower()
+    compact = re.sub(r"[^a-z0-9]+", "", normalized)
     invalid_sentence_hints = (
         "offered by sap",
         "will expire in the next",
@@ -345,9 +409,20 @@ def _is_invalid_candidate_name(candidate_name: str) -> bool:
         "valid until",
         "maintenance until",
         "end of support",
+        "software product",
+        "operating system",
+        "vendor support",
+        "end of maintenance",
+        "end of mainstream maintenance",
+        "sap_ui release",
     )
-    return bool(re.fullmatch(r"\d+|[\d.\-]+|\d+\s+hosts?", normalized)) or any(
-        hint in normalized for hint in invalid_sentence_hints
+    invalid_exact_values = {"rating", "status", "comment", "support", "end"}
+    compact_invalid_hints = {re.sub(r"[^a-z0-9]+", "", hint) for hint in invalid_sentence_hints}
+    return (
+        bool(re.fullmatch(r"\d+|[\d.\-]+|\d+\s+hosts?", normalized))
+        or normalized in invalid_exact_values
+        or any(hint in normalized for hint in invalid_sentence_hints)
+        or any(hint and hint in compact for hint in compact_invalid_hints)
     )
 
 
@@ -382,26 +457,136 @@ def _collect_context_windows(text: str, raw_date: str) -> list[list[str]]:
     return windows
 
 
-def _resolve_finding_section(text: str, raw_date: str) -> str:
+def _resolve_finding_milestone(
+    text: str,
+    finding: RawExpirationFinding,
+    resolved_name: str,
+) -> str:
+    if finding.milestone:
+        return finding.milestone
+    if not resolved_name:
+        return ""
+
+    return _resolve_vendor_support_milestone(text, resolved_name, finding.raw_date)
+
+
+def _resolve_vendor_support_milestone(text: str, resolved_name: str, raw_date: str) -> str:
     lines = [line.strip() for line in text.splitlines()]
+
+    for index, line in enumerate(lines):
+        normalized = line.lower()
+        if not normalized.startswith("end of standard vendor support"):
+            continue
+
+        cursor = index + 1
+        while cursor < len(lines) and lines[cursor].lower().startswith("end of extended vendor support"):
+            cursor += 1
+        if cursor < len(lines) and lines[cursor].lower() == "comment":
+            cursor += 1
+
+        if cursor >= len(lines):
+            continue
+
+        component_name = lines[cursor].strip()
+        date_values = _collect_following_full_dates(lines, cursor + 1, limit=3)
+        if component_name == resolved_name:
+            if len(date_values) >= 1 and date_values[0] == raw_date:
+                return "End of Standard Vendor Support"
+            if len(date_values) >= 2 and date_values[1] == raw_date:
+                return "End of Extended Vendor Support"
+
+        operating_system_dates = _extract_following_operating_system_dates(lines, cursor + 1)
+        if resolved_name != "Operating System":
+            continue
+        if len(operating_system_dates) >= 1 and operating_system_dates[0] == raw_date:
+            return "End of Standard Vendor Support"
+        if len(operating_system_dates) >= 2 and operating_system_dates[1] == raw_date:
+            return "End of Extended Vendor Support"
+
+    return ""
+
+
+def _resolve_finding_section(text: str, raw_date: str, resolved_name: str) -> str:
+    lines = [line.strip() for line in text.splitlines()]
+    component_section = _resolve_section_from_component_anchor(lines, raw_date, resolved_name)
+    if component_section:
+        return component_section
 
     for index, line in enumerate(lines):
         if raw_date not in line:
             continue
 
-        window = [candidate for candidate in lines[max(0, index - 5) : index + 6] if candidate]
-        vendor_support_context = _has_vendor_support_context(window)
-
-        for lookback_index in range(index - 1, -1, -1):
-            candidate = lines[lookback_index].strip()
-            if not candidate:
-                continue
-            if vendor_support_context and candidate.lower() == "sap kernel release":
-                continue
-            if _is_section_heading(candidate):
-                return candidate
+        section = _find_section_heading_for_index(lines, index, resolved_name)
+        if section:
+            return section
 
     return ""
+
+
+def _resolve_section_from_component_anchor(
+    lines: list[str],
+    raw_date: str,
+    resolved_name: str,
+) -> str:
+    if not resolved_name:
+        return ""
+
+    scored_sections: list[tuple[int, str]] = []
+
+    for index, line in enumerate(lines):
+        if resolved_name not in line:
+            continue
+
+        section = _find_section_heading_for_index(lines, index, resolved_name)
+        if not section:
+            continue
+
+        window = [candidate for candidate in lines[max(0, index - 5) : min(len(lines), index + 6)] if candidate]
+        score = 3
+        if raw_date in line:
+            score += 4
+        if any(raw_date in candidate for candidate in lines[index : min(len(lines), index + 6)]):
+            score += 3
+        if _has_support_context(window):
+            score += 1
+
+        scored_sections.append((score, section))
+
+    if not scored_sections:
+        return ""
+
+    return max(scored_sections, key=lambda item: item[0])[1]
+
+
+def _find_section_heading_for_index(lines: list[str], index: int, resolved_name: str) -> str:
+    window = [candidate for candidate in lines[max(0, index - 5) : min(len(lines), index + 6)] if candidate]
+    vendor_support_context = _has_vendor_support_context(window)
+
+    for lookback_index in range(index - 1, -1, -1):
+        candidate = lines[lookback_index].strip()
+        if not candidate:
+            continue
+        if vendor_support_context and candidate.lower() == "sap kernel release":
+            continue
+        if not _is_section_heading(candidate):
+            continue
+        if not _is_section_compatible_with_name(candidate, resolved_name, window):
+            continue
+        return candidate
+
+    return ""
+
+
+def _is_section_compatible_with_name(section: str, resolved_name: str, window: list[str]) -> bool:
+    normalized_section = section.strip().lower()
+    normalized_name = resolved_name.strip().lower()
+    normalized_window = " ".join(window).lower()
+
+    if normalized_section == "sap kernel release":
+        kernel_hints = ("kernel", "patch level", "downward compatible kernel")
+        return any(hint in normalized_name or hint in normalized_window for hint in kernel_hints)
+
+    return True
 
 
 def _has_support_context(window: list[str]) -> bool:
@@ -433,7 +618,7 @@ def _is_section_heading(line: str) -> bool:
         return True
     if normalized.endswith(" - maintenance status"):
         return True
-    if "support package stack for" in normalized:
+    if "support package stack for" in normalized and len(normalized.split()) <= 8 and "." not in normalized:
         return True
     if normalized in {"sap kernel release", "certificates"}:
         return True

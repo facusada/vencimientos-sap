@@ -29,7 +29,7 @@ SEMANTIC_PHRASES = (
 SYSTEM_PROMPT = """You analyze SAP EarlyWatch Alert reports.
 Extract every maintenance, expiration, valid-until, support-until, or end-of-maintenance date.
 Return JSON only with this shape:
-{"items":[{"nombre":"Component name","fecha":"raw date as seen"}]}
+{"items":[{"nombre":"Component name","fecha":"raw date as seen","hito":"End of Standard Vendor Support or End of Extended Vendor Support when present, otherwise empty string"}]}
 Infer the most reasonable component name from nearby context when needed.
 Do not include explanations or markdown fences."""
 
@@ -37,7 +37,7 @@ Do not include explanations or markdown fences."""
 class DocumentIntelligenceProvider(ABC):
     @abstractmethod
     def extract_expirations(self, text: str) -> list[dict[str, str]]:
-        """Return raw AI findings with keys `nombre` and `fecha`."""
+        """Return raw AI findings with keys `nombre`, `fecha`, and optional `hito`."""
 
 
 class FakeSemanticDocumentIntelligence(DocumentIntelligenceProvider):
@@ -58,7 +58,7 @@ class FakeSemanticDocumentIntelligence(DocumentIntelligenceProvider):
             if not name:
                 continue
 
-            findings.append({"nombre": name, "fecha": match.group(1)})
+            findings.append({"nombre": name, "fecha": match.group(1), "hito": ""})
 
         findings.extend(_extract_vendor_support_table_findings(lines))
         return _deduplicate_findings(findings)
@@ -173,16 +173,38 @@ def _extract_vendor_support_table_findings(lines: list[str]) -> list[dict[str, s
         component_name = lines[cursor]
         date_values = _collect_following_full_dates(lines, cursor + 1, limit=3)
         if component_name and len(date_values) >= 2:
-            findings.extend(
-                {"nombre": component_name, "fecha": date_value}
-                for date_value in date_values[:2]
+            findings.append(
+                {
+                    "nombre": component_name,
+                    "fecha": date_values[0],
+                    "hito": "End of Standard Vendor Support",
+                }
+            )
+            findings.append(
+                {
+                    "nombre": component_name,
+                    "fecha": date_values[1],
+                    "hito": "End of Extended Vendor Support",
+                }
             )
 
         operating_system_dates = _extract_following_operating_system_dates(lines, cursor + 1)
-        findings.extend(
-            {"nombre": "Operating System", "fecha": date_value}
-            for date_value in operating_system_dates
-        )
+        if len(operating_system_dates) >= 1:
+            findings.append(
+                {
+                    "nombre": "Operating System",
+                    "fecha": operating_system_dates[0],
+                    "hito": "End of Standard Vendor Support",
+                }
+            )
+        if len(operating_system_dates) >= 2:
+            findings.append(
+                {
+                    "nombre": "Operating System",
+                    "fecha": operating_system_dates[1],
+                    "hito": "End of Extended Vendor Support",
+                }
+            )
 
     return findings
 
@@ -230,15 +252,19 @@ def _collect_previous_full_dates(lines: list[str], start_index: int, limit: int)
 
 def _deduplicate_findings(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     deduplicated: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
 
     for finding in findings:
-        key = (finding.get("nombre", "").strip(), finding.get("fecha", "").strip())
-        if not all(key) or key in seen:
+        key = (
+            finding.get("nombre", "").strip(),
+            finding.get("fecha", "").strip(),
+            finding.get("hito", "").strip(),
+        )
+        if not key[0] or not key[1] or key in seen:
             continue
 
         seen.add(key)
-        deduplicated.append({"nombre": key[0], "fecha": key[1]})
+        deduplicated.append({"nombre": key[0], "fecha": key[1], "hito": key[2]})
 
     return deduplicated
 
@@ -250,6 +276,7 @@ def _build_user_prompt(text: str) -> str:
         "Do not use instruction text, prompt text, or generic placeholders as component names.\n"
         "Ignore analysis windows, SQL statement dates, collection periods, CPU peak hours, and operational telemetry dates.\n"
         "If a date is present but no component can be identified from nearby document context, omit that item.\n"
+        "When the document distinguishes End of Standard Vendor Support and End of Extended Vendor Support, set hito accordingly.\n"
         "Keep raw dates exactly as found.\n\n"
         "BEGIN_DOCUMENT\n"
         f"{text}\n"
@@ -288,8 +315,9 @@ def _parse_ai_payload(content: str) -> list[dict[str, str]]:
             continue
         nombre = str(item.get("nombre", "")).strip()
         fecha = str(item.get("fecha", "")).strip()
+        hito = str(item.get("hito", "")).strip()
         if nombre and fecha:
-            normalized_items.append({"nombre": nombre, "fecha": fecha})
+            normalized_items.append({"nombre": nombre, "fecha": fecha, "hito": hito})
 
     return normalized_items
 
