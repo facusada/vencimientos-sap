@@ -6,11 +6,12 @@
 
 ## Capas
 
-- API: recibe el archivo y traduce errores de dominio a respuestas HTTP.
-- Parsers: extraen texto desde `.docx` o convierten `.doc` legado antes de extraer.
-- Document intelligence: interpreta semanticamente el contenido y devuelve hallazgos crudos `nombre` + `fecha`.
-- Normalizer: valida fechas, resuelve `MM.YYYY`, normaliza a ISO y elimina duplicados exactos.
-- Excel exporter: genera el workbook final con columnas `Nombre` y `Fecha`.
+- Frontend UI: app Vue 3 standalone para carga de archivos, feedback de estado y descarga del Excel.
+- Backend API: vive en `backend/app/`, recibe el archivo y traduce errores de dominio a respuestas HTTP.
+- Parsers: viven en `backend/app/parsers/`, extraen texto desde `.docx`, parsean `.doc` Word XML cuando aplica, o convierten `.doc` binario legado antes de extraer segun las capacidades del sistema operativo.
+- Document intelligence: vive en `backend/app/services/` e interpreta semanticamente el contenido y devuelve hallazgos crudos `nombre` + `fecha`.
+- Normalizer: vive en `backend/app/` y valida fechas, resuelve `MM.YYYY`, normaliza a ISO y elimina duplicados exactos.
+- Excel exporter: vive en `backend/app/services/` y genera el workbook final con columnas `Nombre` y `Fecha`.
 - Orchestrator service: une el flujo completo sin acoplar la API a un proveedor IA concreto.
 
 ## Abstraccion de IA
@@ -23,6 +24,7 @@
 
 ## Decisiones
 
+- El frontend vive desacoplado del backend y usa proxy de Vite para desarrollo local.
 - La deteccion principal no depende de regex rigidas dentro de la orquestacion.
 - La normalizacion de fechas queda fuera del proveedor IA para mantener trazabilidad y reglas auditables.
-- `.doc` requiere Microsoft Word en Windows para conversion temporal.
+- `.doc` Word 2003 XML se parsea de forma directa; `.doc` binario usa Microsoft Word en Windows y LibreOffice headless en macOS/Linux para conversion temporal.

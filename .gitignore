@@ -1,27 +1,6 @@
-# Python
+.venv/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual env
-.env/
-venv/
-.env.*
-*.env
-
-# VSCode
-.vscode/
-
-# OS
-.DS_Store
-
-# Logs
-*.log
-
-# Test cache
 .pytest_cache/
-
-# Build
-dist/
-build/
+*.egg-info/
+frontend/node_modules/
+frontend/dist/

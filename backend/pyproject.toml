@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vencimientos-sap"
+version = "0.1.0"
+description = "Analizador de vencimientos SAP EWA"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "openai>=1.76.0,<2.0.0",
+    "openpyxl>=3.1.0,<4.0.0",
+    "python-dotenv>=1.1.0,<2.0.0",
+    "python-docx>=1.1.0,<2.0.0",
+    "pypdf>=6.0.0,<7.0.0",
+    "python-multipart>=0.0.9,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28.0,<1.0.0",
+    "pytest>=8.0.0,<9.0.0",
+    "uvicorn>=0.34.0,<1.0.0",
+]
+ocr = [
+    "pillow>=11.0.0,<12.0.0",
+    "pypdfium2>=4.30.0,<5.0.0",
+    "pytesseract>=0.3.13,<1.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
