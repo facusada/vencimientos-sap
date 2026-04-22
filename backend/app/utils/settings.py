@@ -5,7 +5,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-for dotenv_path in (Path.cwd() / ".env", Path(__file__).resolve().parents[3] / ".env"):
+for dotenv_path in (
+    Path.cwd() / ".env",
+    Path.cwd() / "backend" / ".env",
+    Path(__file__).resolve().parents[2] / ".env",
+):
     if dotenv_path.exists():
         load_dotenv(dotenv_path, override=False)
 
