@@ -89,7 +89,7 @@ describe("App upload flow", () => {
     await flushPromises();
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/ewa/analyze",
+      "/api/ewa/analyze",
       expect.objectContaining({
         method: "POST",
         body: expect.any(FormData),
@@ -140,5 +140,31 @@ describe("App upload flow", () => {
 
     expect(wrapper.text()).toContain("No se detectaron fechas de vencimiento en el EWA enviado.");
     expect(anchorClickSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured API base URL when provided", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "/backend");
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(
+      new Response(new Blob(["xlsx"]), {
+        status: 200,
+        headers: {
+          "Content-Disposition": 'attachment; filename="ewa-expirations.xlsx"',
+        },
+      }),
+    );
+
+    const wrapper = mount(App);
+    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
+
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/backend/ewa/analyze",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      }),
+    );
   });
 });

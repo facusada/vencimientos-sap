@@ -72,6 +72,41 @@ def test_post_ewa_analyze_returns_excel_file_for_pdf(monkeypatch):
     assert sheet["D3"].value == "2026-12-31"
 
 
+def test_post_api_ewa_analyze_returns_excel_file_for_pdf(monkeypatch):
+    app.dependency_overrides[get_document_intelligence_provider] = (
+        lambda: StubDocumentIntelligenceProvider()
+    )
+    monkeypatch.setattr(
+        "app.services.ewa_analysis_service.extract_text",
+        lambda filename, payload: (
+            "SAP Product Version is supported until 02.2027.\nKernel expires on 2026-12-31."
+            if filename == "ewa.pdf" and payload == b"fake-pdf"
+            else ""
+        ),
+    )
+
+    try:
+        response = client.post(
+            "/api/ewa/analyze",
+            files={
+                "file": (
+                    "ewa.pdf",
+                    b"fake-pdf",
+                    "application/pdf",
+                )
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert (
+        response.headers["content-type"]
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "attachment; filename=ewa-expirations.xlsx" in response.headers["content-disposition"]
+
+
 def test_post_ewa_analyze_rejects_unsupported_extension():
     response = client.post(
         "/ewa/analyze",

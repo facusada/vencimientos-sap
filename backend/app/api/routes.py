@@ -12,6 +12,7 @@ router = APIRouter()
 
 
 @router.post("/ewa/analyze")
+@router.post("/api/ewa/analyze", include_in_schema=False)
 async def analyze_ewa(
     file: UploadFile = File(...),
     provider: DocumentIntelligenceProvider = Depends(get_document_intelligence_provider),

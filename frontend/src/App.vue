@@ -7,6 +7,7 @@ const successMessage = ref("");
 const isUploading = ref(false);
 const isDragging = ref(false);
 const fileInput = ref(null);
+const analyzeUrl = buildAnalyzeUrl();
 
 const canSubmit = computed(() => Boolean(selectedFile.value) && !isUploading.value);
 const fileLabel = computed(() => {
@@ -67,7 +68,7 @@ async function submitForm() {
     const formData = new FormData();
     formData.append("file", selectedFile.value);
 
-    const response = await fetch("/ewa/analyze", {
+    const response = await fetch(analyzeUrl, {
       method: "POST",
       body: formData,
     });
@@ -98,6 +99,15 @@ function openFilePicker() {
 
 function isSupportedFile(filename) {
   return filename.toLowerCase().endsWith(".pdf");
+}
+
+function buildAnalyzeUrl() {
+  const rawBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
+  const normalizedBaseUrl = rawBaseUrl.endsWith("/")
+    ? rawBaseUrl.slice(0, -1)
+    : rawBaseUrl;
+
+  return `${normalizedBaseUrl}/ewa/analyze`;
 }
 
 function formatBytes(size) {

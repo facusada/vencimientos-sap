@@ -67,6 +67,7 @@ Construir un frontend en Vue 3 para el flujo de analisis EWA que:
 - Se agrega carpeta `frontend/` con app Vue 3 + Vite y backend Python separado en `backend/`.
 - La UI consume el backend existente sin acoplarse a la implementacion interna de IA.
 - El desarrollo local usara proxy de Vite para evitar configuracion adicional de CORS.
+- La URL base de la API debe poder resolverse por entorno para soportar despliegue con frontend en `/` y backend montado bajo `/api` en Vercel, sin alterar el endpoint funcional `POST /ewa/analyze`.
 
 ### Calidad
 

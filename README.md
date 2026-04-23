@@ -71,14 +71,22 @@ Completar en tu entorno o shell estas variables:
 ## Endpoint
 
 - `POST /ewa/analyze`
+- Alias de deploy Vercel: `POST /api/ewa/analyze`
 - Input principal: archivo `.pdf` con texto extraible
 - Output: archivo Excel `.xlsx` descargable con columnas `Seccion`, `Nombre`, `Hito` y `Fecha`
 
 ## Frontend
 
 - UI Vue 3 standalone con Vite.
-- Proxy local hacia `http://127.0.0.1:8000` para el endpoint `/ewa/analyze`.
+- En desarrollo consume `VITE_API_BASE_URL=/api` por defecto y Vite proxyea `/api` hacia `http://127.0.0.1:8000`.
 - Flujo principal: seleccionar archivo, enviar, recibir Excel y disparar descarga.
+
+## Deploy en Vercel
+
+- El monorepo se despliega con `Services` y `vercel.json` en la raiz.
+- `frontend` se publica en `/`.
+- `backend` se publica bajo `/api`.
+- El backend mantiene `POST /ewa/analyze` como endpoint principal y expone `POST /api/ewa/analyze` como alias compatible para Vercel.
 
 Pruebas frontend:
 

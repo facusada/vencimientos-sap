@@ -27,6 +27,7 @@
 ## Decisiones
 
 - El frontend vive desacoplado del backend y usa proxy de Vite para desarrollo local.
+- En deploy sobre Vercel Services, el frontend vive en `/` y el backend bajo `/api`; el cliente resuelve la base por entorno y el backend conserva un alias `/api/ewa/analyze` para compatibilidad de ruteo.
 - La deteccion principal no depende de regex rigidas dentro de la orquestacion.
 - La normalizacion de fechas queda fuera del proveedor IA para mantener trazabilidad y reglas auditables.
 - La reconciliacion local debe preservar nombres especificos ya resueltos por document intelligence y reservar sus heuristicas para nombres genericos o ambiguos.
