@@ -130,23 +130,15 @@ def test_build_consolidated_workbook_generates_base_client_view_and_uncataloged_
     assert workbook.sheetnames == ["Base", "VistaClientes", "ComponentesNoCatalogados"]
 
     base = workbook["Base"]
-    assert [base.cell(row=1, column=column).value for column in range(1, 8)] == [
+    assert [base.cell(row=1, column=column).value for column in range(1, 4)] == [
         "Cliente",
-        "Periodo",
         "Componente",
-        "Hito",
         "FechaVencimiento",
-        "Seccion",
-        "FuenteEWA",
     ]
-    assert [base.cell(row=2, column=column).value for column in range(1, 8)] == [
+    assert [base.cell(row=2, column=column).value for column in range(1, 4)] == [
         "Cliente A",
-        "2026-04",
         "SAP Kernel",
-        "End of Standard Vendor Support",
         "2026-12-31",
-        "SAP Kernel Release",
-        "cliente-a.pdf",
     ]
 
     client_view = workbook["VistaClientes"]

@@ -1,7 +1,6 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 
-const mode = ref("single");
 const selectedFiles = ref([]);
 const period = ref(getCurrentPeriod());
 const clientNamesByFileKey = ref({});
@@ -11,10 +10,9 @@ const successMessageTone = ref("success");
 const isUploading = ref(false);
 const isDragging = ref(false);
 const fileInput = ref(null);
-const analyzeUrl = buildApiUrl("/ewa/analyze");
+const fileRowRefs = ref({});
 const consolidateUrl = buildApiUrl("/ewa/consolidate");
 
-const selectedFile = computed(() => selectedFiles.value[0] ?? null);
 const clientEntries = computed(() =>
   selectedFiles.value.map((file) => getClientNameForFile(file)).filter(Boolean),
 );
@@ -30,30 +28,22 @@ const canSubmit = computed(() => {
     return false;
   }
 
-  if (mode.value === "single") {
-    return Boolean(selectedFile.value);
-  }
-
   return (
-    selectedFiles.value.length > 0
-    && isValidPeriod(period.value)
-    && clientEntries.value.length === selectedFiles.value.length
+    selectedFiles.value.length > 0 &&
+    isValidPeriod(period.value) &&
+    clientEntries.value.length === selectedFiles.value.length
   );
 });
 const fileLabel = computed(() => {
   if (!selectedFiles.value.length) {
-    return mode.value === "single" ? "Sin archivo seleccionado" : "Sin EWAs seleccionados";
-  }
-
-  if (mode.value === "single") {
-    return `${selectedFile.value.name} · ${formatBytes(selectedFile.value.size)}`;
+    return "Sin EWAs seleccionados";
   }
 
   return formatEwaCount(selectedFiles.value.length);
 });
 
 function onFileChange(event) {
-  applyFiles(Array.from(event.target.files ?? []));
+  void applyFiles(Array.from(event.target.files ?? []));
 }
 
 function onDrop(event) {
@@ -63,10 +53,10 @@ function onDrop(event) {
   }
 
   isDragging.value = false;
-  applyFiles(Array.from(event.dataTransfer?.files ?? []));
+  void applyFiles(Array.from(event.dataTransfer?.files ?? []));
 }
 
-function applyFiles(files) {
+async function applyFiles(files) {
   successMessage.value = "";
   successMessageTone.value = "success";
 
@@ -85,10 +75,26 @@ function applyFiles(files) {
   }
 
   errorMessage.value = "";
-  selectedFiles.value = mode.value === "single" ? [files[0]] : mergeSelectedFiles(files);
+  const nextFiles = mergeSelectedFiles(files);
+  const previousKeys = new Set(selectedFiles.value.map(getFileKey));
+  selectedFiles.value = nextFiles;
+
+  const addedFiles = nextFiles.filter((file) => !previousKeys.has(getFileKey(file)));
 
   if (fileInput.value) {
     fileInput.value.value = "";
+  }
+
+  const lastAddedFile = addedFiles.at(-1);
+  if (lastAddedFile) {
+    await nextTick();
+    const rowElement = fileRowRefs.value[getFileKey(lastAddedFile)];
+    if (typeof rowElement?.scrollIntoView === "function") {
+      rowElement.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
   }
 }
 
@@ -104,31 +110,13 @@ async function submitForm() {
   successMessageTone.value = "success";
 
   try {
-    if (mode.value === "single") {
-      await submitSingleAnalysis();
-    } else {
-      await submitConsolidatedAnalysis();
-    }
+    await submitConsolidatedAnalysis();
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "No se pudo completar el analisis.";
   } finally {
     isUploading.value = false;
   }
-}
-
-async function submitSingleAnalysis() {
-  const formData = new FormData();
-  formData.append("file", selectedFile.value);
-
-  const response = await fetch(analyzeUrl, {
-    method: "POST",
-    body: formData,
-  });
-
-  await downloadResponse(response, "ewa-expirations.xlsx");
-  successMessage.value = "Analisis completado. El Excel ya esta listo.";
-  successMessageTone.value = "success";
 }
 
 async function submitConsolidatedAnalysis() {
@@ -161,10 +149,6 @@ async function downloadResponse(response, fallbackFilename) {
 }
 
 function validateConsolidatedMetadata() {
-  if (mode.value !== "consolidated") {
-    return;
-  }
-
   if (!isValidPeriod(period.value)) {
     throw new Error("El periodo debe tener formato YYYY-MM.");
   }
@@ -212,20 +196,13 @@ function removeSelectedFile(fileToRemove) {
   }
 }
 
-function setMode(nextMode) {
-  if (isUploading.value || mode.value === nextMode) {
+function setFileRowRef(key, element) {
+  if (element) {
+    fileRowRefs.value[key] = element;
     return;
   }
 
-  mode.value = nextMode;
-  selectedFiles.value = [];
-  clientNamesByFileKey.value = {};
-  errorMessage.value = "";
-  successMessage.value = "";
-  successMessageTone.value = "success";
-  if (fileInput.value) {
-    fileInput.value.value = "";
-  }
+  delete fileRowRefs.value[key];
 }
 
 function mergeSelectedFiles(files) {
@@ -371,26 +348,7 @@ function triggerDownload(blob, filename) {
         <p class="eyebrow">SAP EarlyWatch Alert</p>
         <strong class="brand">Vencimientos SAP</strong>
       </div>
-      <div class="mode-switch" aria-label="Tipo de exportacion">
-        <button
-          type="button"
-          :class="{ 'mode-switch__button--active': mode === 'single' }"
-          :disabled="isUploading"
-          class="mode-switch__button"
-          @click="setMode('single')"
-        >
-          Individual
-        </button>
-        <button
-          type="button"
-          :class="{ 'mode-switch__button--active': mode === 'consolidated' }"
-          :disabled="isUploading"
-          class="mode-switch__button"
-          @click="setMode('consolidated')"
-        >
-          Consolidado mensual
-        </button>
-      </div>
+      <div class="topbar__mode-chip" aria-label="Tipo de exportacion">Exportar</div>
     </header>
 
     <section class="workspace">
@@ -398,7 +356,7 @@ function triggerDownload(blob, filename) {
         class="dropzone"
         :class="{
           'dropzone--active': isDragging,
-          'dropzone--ready': selectedFile,
+          'dropzone--ready': selectedFiles.length > 0,
           'dropzone--disabled': isUploading,
         }"
         @dragenter.prevent="!isUploading && (isDragging = true)"
@@ -411,14 +369,14 @@ function triggerDownload(blob, filename) {
           class="sr-only"
           type="file"
           accept=".pdf"
-          :multiple="mode === 'consolidated'"
+          multiple
           :disabled="isUploading"
           @change="onFileChange"
         />
 
         <div class="dropzone__visual">
           <span class="dropzone__badge">Carga</span>
-          <h2>{{ selectedFiles.length ? (mode === "single" ? "Archivo listo" : "Archivos listos") : "Subi tu EWA" }}</h2>
+          <h2>{{ selectedFiles.length ? "Archivos listos" : "Subi tus EWAs" }}</h2>
           <p>
             {{ selectedFiles.length ? fileLabel : "Arrastra el documento aca o elegilo manualmente." }}
           </p>
@@ -430,20 +388,19 @@ function triggerDownload(blob, filename) {
               :disabled="isUploading"
               @click="openFilePicker"
             >
-              {{
-                selectedFiles.length
-                  ? (mode === "single" ? "Cambiar archivo" : "Agregar EWAs")
-                  : (mode === "single" ? "Elegir archivo" : "Elegir EWAs")
-              }}
+              {{ selectedFiles.length ? "Agregar EWAs" : "Elegir EWAs" }}
             </button>
             <span class="dropzone__hint">Formato soportado: .pdf</span>
           </div>
           <ul v-if="selectedFiles.length" class="file-list">
-            <li v-for="row in consolidatedFileRows" :key="row.key">
+            <li
+              v-for="row in consolidatedFileRows"
+              :key="row.key"
+              :ref="(element) => setFileRowRef(row.key, element)"
+            >
               <div class="file-list__meta">
                 <span>{{ row.file.name }}</span>
                 <input
-                  v-if="mode === 'consolidated'"
                   :value="row.client"
                   :disabled="isUploading"
                   :aria-label="`Cliente para ${row.file.name}`"
@@ -463,7 +420,7 @@ function triggerDownload(blob, filename) {
                   title="Eliminar"
                   @click="removeSelectedFile(row.file)"
                 >
-                  ×
+                  x
                 </button>
               </div>
             </li>
@@ -475,48 +432,30 @@ function triggerDownload(blob, filename) {
       </div>
 
       <section class="showcase">
-        <p class="showcase__kicker">EWA → IA → Excel</p>
-        <h1>{{ mode === "single" ? "Carga el EWA. Descarga el Excel." : "Unifica EWAs. Exporta la base." }}</h1>
+        <p class="showcase__kicker">EWA -> IA -> Excel</p>
+        <h1>Unifica EWAs. Exporta la base.</h1>
         <p class="showcase__text">
-          <template v-if="mode === 'single'">
-            Un unico paso para transformar el reporte en una planilla simple con
-            <code>Seccion</code>, <code>Nombre</code>, <code>Hito</code> y <code>Fecha</code>.
-          </template>
-          <template v-else>
-            Genera un Excel mensual con <code>Base</code>, <code>VistaClientes</code> y componentes no catalogados.
-          </template>
+          Genera un Excel con las columnas <code>Cliente</code>, <code>Componente</code> y <code>FechaVencimiento</code>.
         </p>
       </section>
 
       <aside class="result-card">
-        <span class="result-card__label">{{ mode === "single" ? "Salida" : "Consolidado" }}</span>
-
-        <div v-if="mode === 'consolidated'" class="metadata-panel">
-          <label class="field">
-            <span>Periodo</span>
-            <input v-model="period" type="month" :disabled="isUploading" />
-          </label>
-          <p class="metadata-panel__hint">
-            {{ clientEntries.length }} clientes / {{ formatEwaCount(selectedFiles.length) }}
-          </p>
-        </div>
+        <p class="metadata-panel__hint">
+          {{ clientEntries.length }} clientes / {{ formatEwaCount(selectedFiles.length) }}
+        </p>
 
         <div class="result-card__sheet">
           <div>
-            <strong>{{ mode === "single" ? "Seccion" : "Base" }}</strong>
-            <span>{{ mode === "single" ? "Bloque del EWA" : "Formato largo para Power BI" }}</span>
+            <strong>Cliente</strong>
+            <span>Nombre del cliente asociado al EWA.</span>
           </div>
           <div>
-            <strong>{{ mode === "single" ? "Nombre" : "VistaClientes" }}</strong>
-            <span>{{ mode === "single" ? "Componente o producto" : "Una fila por cliente" }}</span>
+            <strong>Componente</strong>
+            <span>Componente detectado por la IA.</span>
           </div>
           <div>
-            <strong>{{ mode === "single" ? "Hito" : "Catalogo" }}</strong>
-            <span>{{ mode === "single" ? "Tipo de vencimiento" : "Componentes canonicos" }}</span>
-          </div>
-          <div>
-            <strong>{{ mode === "single" ? "Fecha" : "No catalogados" }}</strong>
-            <span>{{ mode === "single" ? "Vencimiento normalizado" : "Insumo para relevar faltantes" }}</span>
+            <strong>FechaVencimiento</strong>
+            <span>Fecha de vencimiento exportada al Excel.</span>
           </div>
         </div>
       </aside>
@@ -527,18 +466,13 @@ function triggerDownload(blob, filename) {
         <p v-if="errorMessage" class="message message--error">{{ errorMessage }}</p>
         <p v-else-if="successMessage" :class="`message message--${successMessageTone}`">{{ successMessage }}</p>
         <p v-else class="message message--neutral">
-          <template v-if="mode === 'single'">
-            {{ selectedFile ? "Archivo preparado para ejecutar el analisis." : "Selecciona un archivo para empezar." }}
-          </template>
-          <template v-else>
-            {{ selectedFiles.length ? "Completa un cliente por EWA para generar el consolidado." : "Selecciona los EWAs del periodo mensual." }}
-          </template>
+          {{ selectedFiles.length ? "Completa un cliente por EWA para generar el consolidado." : "Selecciona los EWAs del periodo mensual." }}
         </p>
       </div>
 
       <button class="primary-button" type="submit" :disabled="!canSubmit">
-        <span v-if="isUploading">{{ mode === "single" ? "Analizando..." : "Consolidando..." }}</span>
-        <span v-else>{{ mode === "single" ? "Generar Excel" : "Generar consolidado" }}</span>
+        <span v-if="isUploading">Consolidando...</span>
+        <span v-else>Generar Excel</span>
       </button>
     </form>
   </main>

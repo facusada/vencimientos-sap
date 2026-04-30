@@ -44,22 +44,18 @@ def build_consolidated_workbook(data: ConsolidatedWorkbookData) -> bytes:
 
 
 def _build_base_sheet(sheet, data: ConsolidatedWorkbookData) -> None:
-    sheet.append(["Cliente", "Periodo", "Componente", "Hito", "FechaVencimiento", "Seccion", "FuenteEWA"])
-    _style_header(sheet, 7)
+    sheet.append(["Cliente", "Componente", "FechaVencimiento"])
+    _style_header(sheet, 3)
 
     for record in data.records:
         sheet.append(
             [
                 record.client,
-                record.period,
                 record.component,
-                record.milestone,
                 record.expiration_date,
-                record.source_section,
-                record.source_filename,
             ]
         )
-        _apply_status_style(sheet, sheet.max_row, record.expiration_date, columns=("A", "B", "C", "D", "E", "F", "G"))
+        _apply_status_style(sheet, sheet.max_row, record.expiration_date, columns=("A", "B", "C"))
 
 
 def _build_client_view_sheet(sheet, data: ConsolidatedWorkbookData) -> None:

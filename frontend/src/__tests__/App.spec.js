@@ -3,16 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.vue";
 
-describe("App upload flow", () => {
+describe("App consolidated upload flow", () => {
   let createObjectUrlSpy;
   let revokeObjectUrlSpy;
   let appendChildSpy;
   let removeChildSpy;
   let anchorClickSpy;
-
-  async function selectFile(wrapper, file) {
-    await selectFiles(wrapper, [file]);
-  }
+  const currentPeriod = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
 
   async function selectFiles(wrapper, files) {
     const input = wrapper.get("input[type='file']");
@@ -21,13 +18,6 @@ describe("App upload flow", () => {
       configurable: true,
     });
     await input.trigger("change");
-  }
-
-  async function enableConsolidatedMode(wrapper) {
-    const consolidatedButton = wrapper
-      .findAll("button")
-      .find((button) => button.text() === "Consolidado mensual");
-    await consolidatedButton.trigger("click");
   }
 
   async function setClientForFile(wrapper, filename, clientName) {
@@ -42,80 +32,36 @@ describe("App upload flow", () => {
     anchorClickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   });
 
-  it("disables submit until a supported file is selected", async () => {
+  it("renders consolidated mode only", () => {
     const wrapper = mount(App);
-    const button = wrapper.get("button[type='submit']");
 
-    expect(button.attributes("disabled")).toBeDefined();
-
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
-
-    expect(button.attributes("disabled")).toBeUndefined();
+    expect(wrapper.text()).toContain("Exportar");
+    expect(wrapper.text()).not.toContain("Individual");
+    expect(wrapper.text()).toContain("Unifica EWAs. Exporta la base.");
+    expect(wrapper.text()).toContain("ComponentesNoCatalogados");
+    expect(wrapper.text()).toContain("Generar Excel");
   });
 
-  it("accepts pdf files in the picker", async () => {
+  it("keeps submit disabled until each EWA has one client", async () => {
     const wrapper = mount(App);
+    await selectFiles(wrapper, [
+      new File(["a"], "a.pdf", { type: "application/pdf" }),
+      new File(["b"], "b.pdf", { type: "application/pdf" }),
+    ]);
+    await setClientForFile(wrapper, "a.pdf", "Cliente A");
 
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
+    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeDefined();
 
-    expect(wrapper.text()).toContain("ewa.pdf");
-    expect(wrapper.text()).toContain("EWA → IA → Excel");
-    expect(wrapper.text()).toContain("Formato soportado: PDF con texto extraible");
+    await setClientForFile(wrapper, "b.pdf", "Cliente B");
+
+    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeUndefined();
   });
 
   it("shows a validation message for unsupported files", async () => {
     const wrapper = mount(App);
-    await selectFile(wrapper, new File(["bad"], "ewa.csv", { type: "text/csv" }));
+    await selectFiles(wrapper, [new File(["bad"], "ewa.csv", { type: "text/csv" })]);
 
     expect(wrapper.text()).toContain("Solo se admiten archivos .pdf.");
-  });
-
-  it("posts the selected file and triggers the Excel download", async () => {
-    let resolveFetch;
-    const fetchSpy = vi.spyOn(window, "fetch").mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveFetch = resolve;
-        }),
-    );
-
-    const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
-
-    await wrapper.get("form").trigger("submit.prevent");
-
-    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeDefined();
-    expect(wrapper.get(".secondary-button").attributes("disabled")).toBeDefined();
-    expect(wrapper.get("input[type='file']").attributes("disabled")).toBeDefined();
-
-    resolveFetch(
-      new Response(
-        new Blob(["xlsx"], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }),
-        {
-          status: 200,
-          headers: {
-            "Content-Disposition": 'attachment; filename="ewa-expirations.xlsx"',
-          },
-        },
-      ),
-    );
-    await flushPromises();
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/ewa/analyze",
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
-    );
-    expect(anchorClickSpy).toHaveBeenCalledOnce();
-    expect(createObjectUrlSpy).toHaveBeenCalledOnce();
-    expect(revokeObjectUrlSpy).toHaveBeenCalledWith("blob:ewa");
-    expect(appendChildSpy).toHaveBeenCalled();
-    expect(removeChildSpy).toHaveBeenCalled();
-    expect(wrapper.text()).toContain("Analisis completado. El Excel ya esta listo.");
   });
 
   it("posts multiple EWAs with clients and period for the consolidated workbook", async () => {
@@ -129,8 +75,6 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await enableConsolidatedMode(wrapper);
-    await wrapper.get("input[type='month']").setValue("2026-04");
     await selectFiles(wrapper, [
       new File(["a"], "a.pdf", { type: "application/pdf" }),
       new File(["b"], "b.pdf", { type: "application/pdf" }),
@@ -150,16 +94,19 @@ describe("App upload flow", () => {
     );
 
     const body = fetchSpy.mock.calls[0][1].body;
-    expect(body.get("period")).toBe("2026-04");
+    expect(body.get("period")).toBe(currentPeriod);
     expect(body.getAll("clients")).toEqual(["Cliente A", "Cliente B"]);
     expect(body.getAll("files").map((file) => file.name)).toEqual(["a.pdf", "b.pdf"]);
     expect(anchorClickSpy).toHaveBeenCalledOnce();
+    expect(createObjectUrlSpy).toHaveBeenCalledOnce();
+    expect(revokeObjectUrlSpy).toHaveBeenCalledWith("blob:ewa");
+    expect(appendChildSpy).toHaveBeenCalled();
+    expect(removeChildSpy).toHaveBeenCalled();
     expect(wrapper.text()).toContain("Consolidado mensual generado. El Excel ya esta listo.");
   });
 
-  it("shows the assigned client next to each uploaded EWA in consolidated mode", async () => {
+  it("shows the assigned client next to each uploaded EWA", async () => {
     const wrapper = mount(App);
-    await enableConsolidatedMode(wrapper);
     await selectFiles(wrapper, [
       new File(["a"], "a.pdf", { type: "application/pdf" }),
       new File(["b"], "b.pdf", { type: "application/pdf" }),
@@ -193,8 +140,6 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await enableConsolidatedMode(wrapper);
-    await wrapper.get("input[type='month']").setValue("2026-04");
     await selectFiles(wrapper, [
       new File(["a"], "diarco.pdf", { type: "application/pdf" }),
       new File(["b"], "EWA_PS4_Travel_Abril-2026.pdf", { type: "application/pdf" }),
@@ -209,7 +154,7 @@ describe("App upload flow", () => {
     expect(wrapper.get(".message").classes()).toContain("message--warning");
   });
 
-  it("adds EWAs incrementally in consolidated mode instead of replacing the previous selection", async () => {
+  it("adds EWAs incrementally instead of replacing the previous selection", async () => {
     const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(
       new Response(new Blob(["xlsx"]), {
         status: 200,
@@ -220,8 +165,6 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await enableConsolidatedMode(wrapper);
-    await wrapper.get("input[type='month']").setValue("2026-04");
     await selectFiles(wrapper, [new File(["a"], "a.pdf", { type: "application/pdf" })]);
 
     expect(wrapper.text()).toContain("1 EWA seleccionado");
@@ -241,21 +184,7 @@ describe("App upload flow", () => {
     expect(body.getAll("files").map((file) => file.name)).toEqual(["a.pdf", "b.pdf"]);
   });
 
-  it("removes the selected file in single mode", async () => {
-    const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
-
-    expect(wrapper.text()).toContain("ewa.pdf");
-    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeUndefined();
-
-    await wrapper.get("[aria-label='Eliminar ewa.pdf']").trigger("click");
-
-    expect(wrapper.text()).not.toContain("ewa.pdf");
-    expect(wrapper.text()).toContain("Subi tu EWA");
-    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeDefined();
-  });
-
-  it("removes one uploaded EWA from the consolidated list before submitting", async () => {
+  it("removes one uploaded EWA from the list before submitting", async () => {
     const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(
       new Response(new Blob(["xlsx"]), {
         status: 200,
@@ -266,8 +195,6 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await enableConsolidatedMode(wrapper);
-    await wrapper.get("input[type='month']").setValue("2026-04");
     await selectFiles(wrapper, [
       new File(["a"], "a.pdf", { type: "application/pdf" }),
       new File(["b"], "b.pdf", { type: "application/pdf" }),
@@ -287,23 +214,6 @@ describe("App upload flow", () => {
     expect(body.getAll("clients")).toEqual(["Cliente B"]);
   });
 
-  it("keeps consolidated submit disabled until each EWA has one client", async () => {
-    const wrapper = mount(App);
-    await enableConsolidatedMode(wrapper);
-    await wrapper.get("input[type='month']").setValue("2026-04");
-    await selectFiles(wrapper, [
-      new File(["a"], "a.pdf", { type: "application/pdf" }),
-      new File(["b"], "b.pdf", { type: "application/pdf" }),
-    ]);
-    await setClientForFile(wrapper, "a.pdf", "Cliente A");
-
-    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeDefined();
-
-    await setClientForFile(wrapper, "b.pdf", "Cliente B");
-
-    expect(wrapper.get("button[type='submit']").attributes("disabled")).toBeUndefined();
-  });
-
   it("renders backend error detail when the request fails", async () => {
     vi.spyOn(window, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ detail: "PDF does not contain extractable text" }), {
@@ -315,32 +225,13 @@ describe("App upload flow", () => {
     );
 
     const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
+    await selectFiles(wrapper, [new File(["ewa"], "ewa.pdf", { type: "application/pdf" })]);
+    await setClientForFile(wrapper, "ewa.pdf", "Cliente A");
 
     await wrapper.get("form").trigger("submit.prevent");
     await flushPromises();
 
     expect(wrapper.text()).toContain("PDF does not contain extractable text");
-  });
-
-  it("shows a clear message when the EWA has no expiration dates", async () => {
-    vi.spyOn(window, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "No se detectaron fechas de vencimiento en el EWA enviado." }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }),
-    );
-
-    const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
-
-    await wrapper.get("form").trigger("submit.prevent");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("No se detectaron fechas de vencimiento en el EWA enviado.");
-    expect(anchorClickSpy).not.toHaveBeenCalled();
   });
 
   it("uses the configured API base URL when provided", async () => {
@@ -349,19 +240,20 @@ describe("App upload flow", () => {
       new Response(new Blob(["xlsx"]), {
         status: 200,
         headers: {
-          "Content-Disposition": 'attachment; filename="ewa-expirations.xlsx"',
+          "Content-Disposition": 'attachment; filename="ewa-consolidated.xlsx"',
         },
       }),
     );
 
     const wrapper = mount(App);
-    await selectFile(wrapper, new File(["ewa"], "ewa.pdf", { type: "application/pdf" }));
+    await selectFiles(wrapper, [new File(["ewa"], "ewa.pdf", { type: "application/pdf" })]);
+    await setClientForFile(wrapper, "ewa.pdf", "Cliente A");
 
     await wrapper.get("form").trigger("submit.prevent");
     await flushPromises();
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/backend/ewa/analyze",
+      "/backend/ewa/consolidate",
       expect.objectContaining({
         method: "POST",
         body: expect.any(FormData),

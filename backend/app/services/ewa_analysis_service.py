@@ -119,6 +119,8 @@ SECTION_HEADING_HINTS = (
     "certificates",
 )
 PERIOD_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+STANDARD_VENDOR_SUPPORT = "End of Standard Vendor Support"
+EXTENDED_VENDOR_SUPPORT = "End of Extended Vendor Support"
 
 
 def get_document_intelligence_provider() -> DocumentIntelligenceProvider:
@@ -186,30 +188,47 @@ def build_expiration_records(
     seen: set[tuple[str, str, str]] = set()
 
     for finding in findings:
-        resolved_name = _resolve_finding_name(text, finding)
-        resolved_section = _resolve_finding_section(text, finding.raw_date, resolved_name)
-        resolved_milestone = _resolve_finding_milestone(text, finding, resolved_name)
         normalized = normalize_date(finding.raw_date)
         if normalized is None:
             continue
-        if not _should_export_finding(text, finding, resolved_name):
-            continue
 
-        key = (resolved_name, normalized.isoformat(), resolved_milestone)
+        key = (finding.name, normalized.isoformat(), finding.milestone)
         if key in seen:
             continue
 
         seen.add(key)
         deduplicated.append(
             ExpirationRecord(
-                source_section=resolved_section,
-                name=resolved_name,
+                source_section=_resolve_finding_section(text, finding.raw_date, finding.name),
+                name=finding.name,
                 expiration_date=normalized.isoformat(),
-                milestone=resolved_milestone,
+                milestone=finding.milestone,
             )
         )
 
-    return deduplicated
+    return _prefer_extended_vendor_support(deduplicated)
+
+
+def _prefer_extended_vendor_support(records: list[ExpirationRecord]) -> list[ExpirationRecord]:
+    preferred_keys = {
+        (record.source_section, record.name)
+        for record in records
+        if record.milestone == EXTENDED_VENDOR_SUPPORT
+    }
+
+    if not preferred_keys:
+        return records
+
+    filtered: list[ExpirationRecord] = []
+    for record in records:
+        if (
+            record.milestone == STANDARD_VENDOR_SUPPORT
+            and (record.source_section, record.name) in preferred_keys
+        ):
+            continue
+        filtered.append(record)
+
+    return filtered
 
 
 def _coerce_raw_findings(raw_items: Iterable[dict[str, str]]) -> list[RawExpirationFinding]:

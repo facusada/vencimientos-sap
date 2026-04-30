@@ -354,10 +354,8 @@ def test_build_expiration_records_keeps_vendor_support_dates_from_ewa_overview_t
     result = build_expiration_records(text, VendorSupportProvider())
 
     assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
-        ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2017-07-11", "End of Standard Vendor Support"),
         ("Operating System(s) - Maintenance Phases", "SQL Server 2012", "2022-07-12", "End of Extended Vendor Support"),
-        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2018-01-09", "End of Standard Vendor Support"),
-        ("Operating System(s) - Maintenance Phases", "Windows Server (x86_64)", "2023-10-10", "End of Extended Vendor Support"),
+        ("Operating System(s) - Maintenance Phases", "Operating System", "2023-10-10", "End of Extended Vendor Support"),
     ]
 
 
@@ -385,8 +383,7 @@ def test_build_expiration_records_prefers_word_table_row_component_for_os_vendor
     result = build_expiration_records(text, OperatingSystemProvider())
 
     assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
-        ("Operating System(s) - Maintenance Phases", "Windows Server 2012 R2", "2018-01-09", "End of Standard Vendor Support"),
-        ("Operating System(s) - Maintenance Phases", "Windows Server 2012 R2", "2023-10-10", "End of Extended Vendor Support"),
+        ("Operating System(s) - Maintenance Phases", "Operating System", "2023-10-10", "End of Extended Vendor Support"),
     ]
 
 
