@@ -4,7 +4,10 @@ from datetime import date
 from openpyxl import load_workbook
 
 from app.models.expiration import ExpirationRecord
+from app.models.expiration import ConsolidatedExpiration
+from app.models.expiration import ConsolidatedWorkbookData
 from app.services.excel_service import build_expiration_workbook
+from app.services.excel_service import build_consolidated_workbook
 
 
 def test_build_expiration_workbook_generates_expected_columns_and_rows():
@@ -78,3 +81,109 @@ def test_build_expiration_workbook_applies_status_colors_for_expired_and_active_
     assert sheet["B3"].fill.fgColor.rgb == "00CFE8C6"
     assert sheet["C3"].fill.fgColor.rgb == "00CFE8C6"
     assert sheet["D3"].fill.fgColor.rgb == "00CFE8C6"
+
+
+def test_build_consolidated_workbook_generates_base_client_view_and_uncataloged_sheets():
+    payload = build_consolidated_workbook(
+        ConsolidatedWorkbookData(
+            clients=[("Cliente A", "2026-04"), ("Cliente B", "2026-04")],
+            records=[
+                ConsolidatedExpiration(
+                    client="Cliente A",
+                    period="2026-04",
+                    component="SAP Kernel",
+                    detected_name="SAP Kernel Release",
+                    milestone="End of Standard Vendor Support",
+                    expiration_date="2026-12-31",
+                    source_section="SAP Kernel Release",
+                    source_filename="cliente-a.pdf",
+                    is_cataloged=True,
+                ),
+                ConsolidatedExpiration(
+                    client="Cliente A",
+                    period="2026-04",
+                    component="SAP Solution Manager",
+                    detected_name="SAP Solution Manager 7.2",
+                    milestone="",
+                    expiration_date="2027-12-31",
+                    source_section="Maintenance",
+                    source_filename="cliente-a.pdf",
+                    is_cataloged=True,
+                ),
+                ConsolidatedExpiration(
+                    client="Cliente A",
+                    period="2026-04",
+                    component="SAP Cloud Connector",
+                    detected_name="SAP Cloud Connector",
+                    milestone="",
+                    expiration_date="2027-01-31",
+                    source_section="Custom",
+                    source_filename="cliente-a.pdf",
+                    is_cataloged=False,
+                ),
+            ],
+        )
+    )
+
+    workbook = load_workbook(filename=BytesIO(payload))
+
+    assert workbook.sheetnames == ["Base", "VistaClientes", "ComponentesNoCatalogados"]
+
+    base = workbook["Base"]
+    assert [base.cell(row=1, column=column).value for column in range(1, 8)] == [
+        "Cliente",
+        "Periodo",
+        "Componente",
+        "Hito",
+        "FechaVencimiento",
+        "Seccion",
+        "FuenteEWA",
+    ]
+    assert [base.cell(row=2, column=column).value for column in range(1, 8)] == [
+        "Cliente A",
+        "2026-04",
+        "SAP Kernel",
+        "End of Standard Vendor Support",
+        "2026-12-31",
+        "SAP Kernel Release",
+        "cliente-a.pdf",
+    ]
+
+    client_view = workbook["VistaClientes"]
+    assert [client_view.cell(row=1, column=column).value for column in range(1, 13)] == [
+        "Cliente",
+        "Periodo",
+        "SAP Product Version",
+        "SAP NetWeaver",
+        "SAP Solution Manager",
+        "SAP Fiori",
+        "SAP Kernel",
+        "Database",
+        "Operating System",
+        "Support Package Stack",
+        "Certificates",
+        "Otros componentes",
+    ]
+    assert client_view["A2"].value == "Cliente A"
+    assert client_view["B2"].value == "2026-04"
+    assert client_view["E2"].value == "2027-12-31"
+    assert client_view["G2"].value == "2026-12-31 (End of Standard Vendor Support)"
+    assert client_view["L2"].value == "SAP Cloud Connector: 2027-01-31"
+    assert client_view["A3"].value == "Cliente B"
+    assert client_view["G3"].value is None
+
+    uncataloged = workbook["ComponentesNoCatalogados"]
+    assert [uncataloged.cell(row=1, column=column).value for column in range(1, 6)] == [
+        "NombreDetectado",
+        "Cliente",
+        "Periodo",
+        "FechaVencimiento",
+        "FuenteEWA",
+    ]
+    assert [uncataloged.cell(row=2, column=column).value for column in range(1, 6)] == [
+        "SAP Cloud Connector",
+        "Cliente A",
+        "2026-04",
+        "2027-01-31",
+        "cliente-a.pdf",
+    ]

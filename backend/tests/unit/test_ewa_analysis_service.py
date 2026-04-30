@@ -229,6 +229,41 @@ def test_build_expiration_records_filters_analysis_dates_while_preserving_specif
     ]
 
 
+class OperationalDatesProvider(DocumentIntelligenceProvider):
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        return [
+            {"nombre": "SAP HANA Database", "fecha": "29.06.2022"},
+            {"nombre": "SAP HANA Database", "fecha": "20.09.2022"},
+            {"nombre": "SAP HANA Database", "fecha": "02.08.2021"},
+            {"nombre": "SAP HANA Database", "fecha": "08.10.2022"},
+            {"nombre": "SAP HANA Database", "fecha": "31.12.2023"},
+        ]
+
+
+def test_build_expiration_records_filters_operational_hana_dates_from_revision_and_age_tables():
+    provider = OperationalDatesProvider()
+    text = """
+    4.7 HANA Database Version for HEP
+    The following table shows your current SAP HANA database revision.
+    Rating | ProductVersion | HANARevision | ReleaseDate | AgeofRevisionin Months | Deployment Date | Ageof Deployment DateinMonths
+    2.00SP06 | 2.00.063.00 | 29.06.2022 | 44 | 20.09.2022 | 41
+
+    4.7.1 HANA Database Support Package Stack for HEP
+    CurrentVersion | CurrentSupport PackageStack | Available Version | Available Support PackageStack | Maintenance end | Numberofdays until Maintenance End | Rating
+    2 | 06 | 2 | 07 | 31.12.2023 | ...Textcut,see SAPNote 3210457
+
+    9.3.1 Age of Support Packages
+    Software Component | Release | SupportPackage | Finalassembly date | Ageoffinal assembly datein months | Support Package importdate | AgeofSP importdate inmonths | Rating
+    SAP_ABA | 750 | 22 | 02.08.2021 | 55 | 08.10.2022 | 40
+    """
+
+    result = build_expiration_records(text, provider)
+
+    assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
+        ("4.7.1 HANA Database Support Package Stack for HEP", "SAP HANA Database", "2023-12-31", ""),
+    ]
+
+
 class RatingLegendProvider(DocumentIntelligenceProvider):
     def extract_expirations(self, text: str) -> list[dict[str, str]]:
         return [

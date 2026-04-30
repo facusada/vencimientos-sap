@@ -115,6 +115,7 @@ def test_azure_openai_document_intelligence_parses_json_response():
     assert captured_kwargs["response_format"] == {"type": "json_object"}
     assert "BEGIN_DOCUMENT" in captured_kwargs["messages"][1]["content"]
     assert '"hito":"End of Standard Vendor Support or End of Extended Vendor Support when present, otherwise empty string"' in captured_kwargs["messages"][0]["content"]
+    assert "Return each unique nombre, fecha, and hito combination at most once." in captured_kwargs["messages"][0]["content"]
     assert "Use only component names that appear in the document text" in captured_kwargs["messages"][1]["content"]
     assert "Ignore analysis windows" in captured_kwargs["messages"][1]["content"]
     assert result == [
@@ -187,6 +188,52 @@ def test_azure_openai_document_intelligence_extracts_json_when_wrapped_in_text()
     result = provider.extract_expirations("Kernel expires on 2026-12-31.")
 
     assert result == [{"nombre": "Kernel", "fecha": "2026-12-31", "hito": ""}]
+
+
+def test_azure_openai_document_intelligence_recovers_complete_items_from_truncated_json():
+    repeated_item = '{"nombre":"SAP HANA Database","fecha":"31.12.2023","hito":""}'
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        '{"items":['
+                        '{"nombre":"SAP HANA Database","fecha":"31.12.2023","hito":"End of Standard Vendor Support"},'
+                        f"{repeated_item},{repeated_item},"
+                        '{"nombre":"SAP'
+                    )
+                )
+            )
+        ]
+    )
+    mock_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **kwargs: mock_response
+            )
+        )
+    )
+
+    provider = AzureOpenAIDocumentIntelligence(
+        settings=AppSettings(
+            ai_provider="azure-openai",
+            azure_openai_api_key="test-key",
+            azure_openai_endpoint="https://example-resource.openai.azure.com",
+            azure_openai_deployment="gpt-4.1-mini",
+        ),
+        client=mock_client,
+    )
+
+    result = provider.extract_expirations("SAP HANA Database expires on 31.12.2023.")
+
+    assert result == [
+        {
+            "nombre": "SAP HANA Database",
+            "fecha": "31.12.2023",
+            "hito": "End of Standard Vendor Support",
+        },
+        {"nombre": "SAP HANA Database", "fecha": "31.12.2023", "hito": ""},
+    ]
 
 
 def test_create_document_intelligence_provider_builds_azure_provider_from_settings():

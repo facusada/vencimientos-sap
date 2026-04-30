@@ -12,6 +12,8 @@ Servicio FastAPI orientado a documentos SAP EarlyWatch Alert en PDF para detecta
 - `backend/app/parsers/`: extraccion estructurada desde PDF con `pdfplumber`.
 - `backend/app/services/document_intelligence.py`: interfaz y proveedores de IA.
 - `backend/app/services/ewa_analysis_service.py`: orquestacion del flujo.
+- `backend/app/services/component_catalog.py`: normalizacion de componentes para consolidacion.
+- `backend/app/services/consolidation_service.py`: armado de registros consolidados por cliente y periodo.
 - `backend/app/services/excel_service.py`: exportacion Excel.
 - `backend/app/models/`: contratos de dominio.
 - `backend/app/utils/`: utilidades de normalizacion.
@@ -75,11 +77,17 @@ Completar en tu entorno o shell estas variables:
 - Input principal: archivo `.pdf` con texto extraible
 - Output: archivo Excel `.xlsx` descargable con columnas `Seccion`, `Nombre`, `Hito` y `Fecha`
 
+- `POST /ewa/consolidate`
+- Alias de deploy Vercel: `POST /api/ewa/consolidate`
+- Input principal: multiples archivos `.pdf`, `period` en formato `YYYY-MM` y un `clients` por archivo
+- Output: archivo Excel `.xlsx` descargable con hojas `Base`, `VistaClientes` y `ComponentesNoCatalogados`
+  La hoja `VistaClientes` usa columnas default estables y agrega `Otros componentes` para agrupar hallazgos fuera del set principal.
+
 ## Frontend
 
 - UI Vue 3 standalone con Vite.
 - En desarrollo consume `VITE_API_BASE_URL=/api` por defecto y Vite proxyea `/api` hacia `http://127.0.0.1:8000`.
-- Flujo principal: seleccionar archivo, enviar, recibir Excel y disparar descarga.
+- Flujo principal: seleccionar un EWA individual o multiples EWAs para consolidado mensual, enviar, recibir Excel y disparar descarga.
 
 ## Deploy en Vercel
 
@@ -109,15 +117,21 @@ La API carga `.env` desde `backend/.env` y tambien tolera ejecuciones que defina
 - El proveedor por defecto es `FakeSemanticDocumentIntelligence`.
 - La interfaz esta desacoplada para permitir proveedores futuros como OpenAI o Azure OpenAI.
 - La normalizacion de fechas y deduplicacion se realiza fuera del proveedor IA.
+- El parser de payload IA deduplica hallazgos crudos y puede recuperar objetos completos de `items` cuando Azure OpenAI corta una respuesta JSON repetitiva.
 - El parser PDF preserva mejor headers y contexto tabular serializando layout y filas de tabla antes de invocar document intelligence.
 - La reconciliacion de `Nombre` prioriza nombres especificos ya devueltos por la IA y usa heuristicas locales sobre todo para corregir nombres genericos o ruidosos.
 - La columna `Seccion` se resuelve en backend usando el bloque del componente detectado para reducir headings incorrectos como `SAP Kernel Release` en vencimientos de producto.
 - La columna `Hito` distingue vencimientos como `End of Standard Vendor Support` y `End of Extended Vendor Support` cuando el documento los explicita.
+- La orquestacion filtra fechas operativas de tablas tecnicas, por ejemplo `ReleaseDate`, `Deployment Date`, `Final assembly date` y `Support Package importdate`, para que no se exporten como vencimientos de `Database`.
+- El consolidado mensual agrega metadata de cliente y periodo, normaliza componentes a un catalogo inicial y conserva componentes no catalogados para relevamiento.
+- `VistaClientes` prioriza columnas default para componentes frecuentes y resume el resto en `Otros componentes` sin perder trazabilidad en `ComponentesNoCatalogados`.
+- Los EWAs consolidados sin vencimientos detectados se informan en la app sin hacer fallar el archivo completo.
 - Para usar Azure OpenAI real, el proveedor se selecciona por variables de entorno.
 
 ## Trazabilidad
 
 - Spec activa backend: `docs/sdd/wip/ewa-expiration-parser/spec.md`
+- Spec activa consolidacion: `docs/sdd/wip/ewa-consolidated-export/spec.md`
 - Spec activa frontend: `docs/sdd/wip/ewa-upload-ui/spec.md`
 - Commit sugerido SDD: `feature(ewa-parser): redefinir flujo PDF a IA para analisis EWA`
 - Commit sugerido implementacion: `feature(ewa-parser): implementar document intelligence para analisis EWA`

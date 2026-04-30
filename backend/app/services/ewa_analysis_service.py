@@ -1,6 +1,8 @@
 from collections.abc import Iterable
 import re
 
+from app.models.expiration import AnalyzedEwaDocument
+from app.models.expiration import ConsolidatedAnalysisResult
 from app.models.expiration import ExpirationRecord
 from app.models.expiration import RawExpirationFinding
 from app.services.document_intelligence import _collect_following_full_dates
@@ -11,6 +13,8 @@ from app.services.document_intelligence import (
     DocumentIntelligenceProvider,
     create_document_intelligence_provider,
 )
+from app.services.consolidation_service import consolidate_ewa_documents
+from app.services.excel_service import build_consolidated_workbook
 from app.services.excel_service import build_expiration_workbook
 from app.utils.dates import normalize_date
 from app.utils.settings import get_settings
@@ -63,6 +67,18 @@ SUPPORT_CONTEXT_HINTS = (
     "end of extended vendor support",
     "end of mainstream maintenance",
 )
+EXPIRATION_CONTEXT_HINTS = (
+    "maintenance end",
+    "end of standard vendor support",
+    "end of extended vendor support",
+    "end of mainstream maintenance",
+    "supported until",
+    "valid until",
+    "expires on",
+    "end of support",
+    "runs out of maintenance",
+    "run out of security maintenance",
+)
 NOISE_CONTEXT_HINTS = (
     "analysis type",
     "analysis of thread samples",
@@ -82,12 +98,27 @@ NOISE_CONTEXT_HINTS = (
     "data collection",
     "hour of maximal cpu",
 )
+OPERATIONAL_DATE_CONTEXT_HINTS = (
+    "release date",
+    "deployment date",
+    "age of deployment date",
+    "finalassembly date",
+    "final assembly date",
+    "ageoffinal assembly date",
+    "support package importdate",
+    "support package import date",
+    "ageofsp importdate",
+    "hana update information",
+    "date version",
+    "date | version",
+)
 SECTION_HEADING_HINTS = (
     "maintenance phases",
     "maintenance status",
     "sap kernel release",
     "certificates",
 )
+PERIOD_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 def get_document_intelligence_provider() -> DocumentIntelligenceProvider:
@@ -104,6 +135,45 @@ def analyze_ewa_file(
     if not records:
         raise ValueError("No se detectaron fechas de vencimiento en el EWA enviado.")
     return build_expiration_workbook(records)
+
+
+def analyze_ewa_files_for_consolidation(
+    files: list[tuple[str, bytes]],
+    clients: list[str],
+    period: str,
+    provider: DocumentIntelligenceProvider | None = None,
+) -> ConsolidatedAnalysisResult:
+    _validate_consolidation_inputs(files, clients, period)
+    resolved_provider = provider or get_document_intelligence_provider()
+    documents: list[AnalyzedEwaDocument] = []
+
+    for (filename, payload), client in zip(files, clients, strict=True):
+        content = extract_text(filename, payload)
+        documents.append(
+            AnalyzedEwaDocument(
+                client=client.strip(),
+                period=period,
+                filename=filename,
+                records=build_expiration_records(content, resolved_provider),
+            )
+        )
+
+    consolidated_data = consolidate_ewa_documents(documents)
+    return ConsolidatedAnalysisResult(
+        workbook=build_consolidated_workbook(consolidated_data),
+        no_result_documents=consolidated_data.no_result_documents,
+    )
+
+
+def _validate_consolidation_inputs(files: list[tuple[str, bytes]], clients: list[str], period: str) -> None:
+    if not files:
+        raise ValueError("Debe enviar al menos un archivo EWA.")
+    if len(files) != len(clients):
+        raise ValueError("La cantidad de clientes debe coincidir con la cantidad de archivos.")
+    if not PERIOD_PATTERN.match(period):
+        raise ValueError("El periodo debe tener formato YYYY-MM.")
+    if any(not client.strip() for client in clients):
+        raise ValueError("Cada archivo debe tener un cliente asociado.")
 
 
 def build_expiration_records(
@@ -428,8 +498,15 @@ def _is_invalid_candidate_name(candidate_name: str) -> bool:
 
 def _should_export_finding(text: str, finding: RawExpirationFinding, resolved_name: str) -> bool:
     contexts = _collect_context_windows(text, finding.raw_date)
+    local_contexts = _collect_context_windows(text, finding.raw_date, lookback=2, lookahead=2)
     if not contexts:
         return True
+
+    has_expiration_context = any(_has_expiration_context(window) for window in local_contexts)
+    has_operational_date_context = any(_has_operational_date_context(window) for window in local_contexts)
+
+    if has_operational_date_context and not has_expiration_context:
+        return False
 
     if any(_is_noise_context(window) for window in contexts) and not any(
         _has_support_context(window) for window in contexts
@@ -437,12 +514,17 @@ def _should_export_finding(text: str, finding: RawExpirationFinding, resolved_na
         return False
 
     if resolved_name and not _is_generic_component_name(resolved_name):
-        return True
+        return has_expiration_context or not has_operational_date_context
 
-    return any(_has_support_context(window) for window in contexts)
+    return has_expiration_context or any(_has_support_context(window) for window in contexts)
 
 
-def _collect_context_windows(text: str, raw_date: str) -> list[list[str]]:
+def _collect_context_windows(
+    text: str,
+    raw_date: str,
+    lookback: int = 5,
+    lookahead: int = 5,
+) -> list[list[str]]:
     lines = [line.strip() for line in text.splitlines()]
     windows: list[list[str]] = []
 
@@ -450,8 +532,8 @@ def _collect_context_windows(text: str, raw_date: str) -> list[list[str]]:
         if raw_date not in line:
             continue
 
-        start = max(0, index - 5)
-        end = min(len(lines), index + 6)
+        start = max(0, index - lookback)
+        end = min(len(lines), index + lookahead + 1)
         windows.append([candidate for candidate in lines[start:end] if candidate])
 
     return windows
@@ -590,28 +672,48 @@ def _is_section_compatible_with_name(section: str, resolved_name: str, window: l
 
 
 def _has_support_context(window: list[str]) -> bool:
-    normalized_window = " ".join(window).lower()
-    return any(hint in normalized_window for hint in SUPPORT_CONTEXT_HINTS)
+    return _matches_context_hints(window, SUPPORT_CONTEXT_HINTS)
+
+
+def _has_expiration_context(window: list[str]) -> bool:
+    return _matches_context_hints(window, EXPIRATION_CONTEXT_HINTS)
+
+
+def _has_operational_date_context(window: list[str]) -> bool:
+    return _matches_context_hints(window, OPERATIONAL_DATE_CONTEXT_HINTS)
 
 
 def _is_noise_context(window: list[str]) -> bool:
-    normalized_window = " ".join(window).lower()
-    return any(hint in normalized_window for hint in NOISE_CONTEXT_HINTS)
+    return _matches_context_hints(window, NOISE_CONTEXT_HINTS)
 
 
 def _has_vendor_support_context(window: list[str]) -> bool:
-    normalized_window = " ".join(window).lower()
     vendor_support_hints = (
         "end of standard vendor support",
         "end of extended vendor support",
         "database version has already ended",
         "operating system version",
     )
-    return any(hint in normalized_window for hint in vendor_support_hints)
+    return _matches_context_hints(window, vendor_support_hints)
+
+
+def _matches_context_hints(window: list[str], hints: tuple[str, ...]) -> bool:
+    normalized_window = " ".join(window).lower()
+    compact_window = re.sub(r"[^a-z0-9]+", "", normalized_window)
+
+    for hint in hints:
+        if hint in normalized_window:
+            return True
+        compact_hint = re.sub(r"[^a-z0-9]+", "", hint.lower())
+        if compact_hint and compact_hint in compact_window:
+            return True
+
+    return False
 
 
 def _is_section_heading(line: str) -> bool:
     normalized = line.strip().lower()
+    normalized = re.sub(r"^\d+(?:\.\d+)*\s+", "", normalized)
     if normalized.startswith("* "):
         return False
     if normalized.endswith(" - maintenance phases"):

@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import json
 import re
-import sys
 
 from app.utils.settings import AppSettings, get_settings
 
@@ -31,6 +30,7 @@ Extract every maintenance, expiration, valid-until, support-until, or end-of-mai
 Return JSON only with this shape:
 {"items":[{"nombre":"Component name","fecha":"raw date as seen","hito":"End of Standard Vendor Support or End of Extended Vendor Support when present, otherwise empty string"}]}
 Infer the most reasonable component name from nearby context when needed.
+Return each unique nombre, fecha, and hito combination at most once.
 Do not include explanations or markdown fences."""
 
 
@@ -89,9 +89,6 @@ class AzureOpenAIDocumentIntelligence(DocumentIntelligenceProvider):
         except Exception as exc:
             raise ValueError(f"Azure OpenAI request failed: {exc}") from exc
         raw_content = _extract_response_text(response)
-        print("AZURE_RAW_CONTENT_START", file=sys.stderr, flush=True)
-        print(repr(raw_content), file=sys.stderr, flush=True)
-        print("AZURE_RAW_CONTENT_END", file=sys.stderr, flush=True)
         return _parse_ai_payload(raw_content)
 
     def _validate_settings(self) -> None:
@@ -303,12 +300,19 @@ def _parse_ai_payload(content: str) -> list[dict[str, str]]:
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError as exc:
+        recovered_items = _extract_complete_items_from_partial_json(cleaned)
+        if recovered_items:
+            return _normalize_ai_items(recovered_items)
         raise ValueError("Azure OpenAI response is not valid JSON") from exc
 
     items = payload.get("items", [])
     if not isinstance(items, list):
         raise ValueError("Azure OpenAI response does not contain a valid items list")
 
+    return _normalize_ai_items(items)
+
+
+def _normalize_ai_items(items: list[object]) -> list[dict[str, str]]:
     normalized_items: list[dict[str, str]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -319,7 +323,40 @@ def _parse_ai_payload(content: str) -> list[dict[str, str]]:
         if nombre and fecha:
             normalized_items.append({"nombre": nombre, "fecha": fecha, "hito": hito})
 
-    return normalized_items
+    return _deduplicate_findings(normalized_items)
+
+
+def _extract_complete_items_from_partial_json(content: str) -> list[object]:
+    items_key_index = content.find('"items"')
+    if items_key_index == -1:
+        return []
+
+    array_start = content.find("[", items_key_index)
+    if array_start == -1:
+        return []
+
+    decoder = json.JSONDecoder()
+    cursor = array_start + 1
+    items: list[object] = []
+
+    while cursor < len(content):
+        while cursor < len(content) and content[cursor] in " \n\r\t,":
+            cursor += 1
+
+        if cursor >= len(content) or content[cursor] == "]":
+            break
+        if content[cursor] != "{":
+            cursor += 1
+            continue
+
+        try:
+            item, cursor = decoder.raw_decode(content, cursor)
+        except json.JSONDecodeError:
+            break
+
+        items.append(item)
+
+    return items
 
 
 def _extract_json_object(content: str) -> str | None:

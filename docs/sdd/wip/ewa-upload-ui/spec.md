@@ -17,6 +17,7 @@ Construir un frontend en Vue 3 para el flujo de analisis EWA que:
 - Aplicacion Vue 3 standalone dentro del mismo repositorio.
 - Pantalla unica para carga por click o drag-and-drop.
 - Validacion basica de extension `.pdf`.
+- Eliminacion de archivos seleccionados antes de enviar el analisis o consolidado.
 - Llamada HTTP al endpoint `POST /ewa/analyze`.
 - Descarga del archivo `.xlsx` devuelto por la API.
 - Estados visibles de `idle`, `uploading`, `success` y `error`.
@@ -51,6 +52,7 @@ Construir un frontend en Vue 3 para el flujo de analisis EWA que:
 6. Al responder con error, la UI debe mostrar el detalle devuelto por la API.
 7. La UI debe verse correctamente en desktop y mobile.
 8. El frontend debe ejecutarse en desarrollo con Vite y proxy hacia la API local.
+9. Cada EWA seleccionado debe poder eliminarse antes del envio.
 
 ## Edge cases
 
