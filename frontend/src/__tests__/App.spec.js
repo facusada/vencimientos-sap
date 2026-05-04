@@ -38,7 +38,7 @@ describe("App consolidated upload flow", () => {
     expect(wrapper.text()).toContain("Exportar");
     expect(wrapper.text()).not.toContain("Individual");
     expect(wrapper.text()).toContain("Unifica EWAs. Exporta la base.");
-    expect(wrapper.text()).toContain("ComponentesNoCatalogados");
+    expect(wrapper.text()).toContain("FechaVencimiento");
     expect(wrapper.text()).toContain("Generar Excel");
   });
 
