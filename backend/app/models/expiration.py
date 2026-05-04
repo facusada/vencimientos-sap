@@ -25,11 +25,19 @@ class ParsedExpiration:
 
 
 @dataclass(slots=True)
+class AiUsageMetrics:
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass(slots=True)
 class AnalyzedEwaDocument:
     client: str
     period: str
     filename: str
     records: list[ExpirationRecord]
+    ai_usage: AiUsageMetrics | None = None
 
 
 @dataclass(slots=True)
@@ -54,9 +62,20 @@ class EwaWithoutExpirationResults:
 
 
 @dataclass(slots=True)
+class EwaAiUsage:
+    client: str
+    period: str
+    source_filename: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass(slots=True)
 class ConsolidatedWorkbookData:
     clients: list[tuple[str, str]]
     records: list[ConsolidatedExpiration]
+    ai_usages: list[EwaAiUsage] = field(default_factory=list)
     no_result_documents: list[EwaWithoutExpirationResults] = field(default_factory=list)
 
 

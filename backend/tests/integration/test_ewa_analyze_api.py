@@ -5,11 +5,22 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from app.main import app
+from app.models.expiration import AiUsageMetrics
 from app.services.document_intelligence import DocumentIntelligenceProvider
+from app.services.ai_usage_repository import AiUsageRepository
+from app.services.ai_usage_repository import get_ai_usage_repository
 from app.services.ewa_analysis_service import get_document_intelligence_provider
 
 
 client = TestClient(app)
+
+
+class StubAiUsageRepository(AiUsageRepository):
+    def __init__(self) -> None:
+        self.saved_usages = []
+
+    def save_usages(self, usages) -> None:
+        self.saved_usages.extend(usages)
 
 
 class StubDocumentIntelligenceProvider(DocumentIntelligenceProvider):
@@ -181,7 +192,18 @@ def test_post_ewa_consolidate_returns_monthly_workbook_for_multiple_pdfs(monkeyp
                 ]
             return [{"nombre": "SAP Fiori Front-End Server", "fecha": "31.12.2027"}]
 
+        def extract_expirations_with_usage(
+            self,
+            text: str,
+        ) -> tuple[list[dict[str, str]], AiUsageMetrics | None]:
+            items = self.extract_expirations(text)
+            if "cliente-a" in text:
+                return items, AiUsageMetrics(input_tokens=1100, output_tokens=140, total_tokens=1240)
+            return items, AiUsageMetrics(input_tokens=950, output_tokens=90, total_tokens=1040)
+
+    usage_repository = StubAiUsageRepository()
     app.dependency_overrides[get_document_intelligence_provider] = lambda: ConsolidationProvider()
+    app.dependency_overrides[get_ai_usage_repository] = lambda: usage_repository
     monkeypatch.setattr(
         "app.services.ewa_analysis_service.extract_text",
         lambda filename, payload: (
@@ -214,13 +236,20 @@ def test_post_ewa_consolidate_returns_monthly_workbook_for_multiple_pdfs(monkeyp
     workbook = load_workbook(filename=BytesIO(response.content))
     assert workbook.sheetnames == ["Base", "VistaClientes", "ComponentesNoCatalogados"]
     assert workbook["Base"]["A2"].value == "Cliente A"
-    assert workbook["Base"]["C2"].value == "SAP Kernel"
-    assert workbook["Base"]["G2"].value == "a.pdf"
+    assert workbook["Base"]["B2"].value == "SAP Kernel"
+    assert workbook["Base"]["C2"].value == "2026-12-31"
     assert workbook["VistaClientes"]["A3"].value == "Cliente B"
     assert workbook["VistaClientes"]["F3"].value == "2027-12-31"
     assert workbook["VistaClientes"]["L2"].value == "SAP Cloud Connector: 2027-01-31"
     assert workbook["ComponentesNoCatalogados"]["A2"].value == "SAP Cloud Connector"
     assert "x-ewa-no-results" not in response.headers
+    assert [
+        (item.client, item.input_tokens, item.output_tokens, item.total_tokens)
+        for item in usage_repository.saved_usages
+    ] == [
+        ("Cliente A", 1100, 140, 1240),
+        ("Cliente B", 950, 90, 1040),
+    ]
 
 
 def test_post_ewa_consolidate_reports_ewa_without_expiration_results(monkeypatch):
@@ -230,7 +259,9 @@ def test_post_ewa_consolidate_reports_ewa_without_expiration_results(monkeypatch
                 return [{"nombre": "Kernel", "fecha": "2026-12-31"}]
             return []
 
+    usage_repository = StubAiUsageRepository()
     app.dependency_overrides[get_document_intelligence_provider] = lambda: PartialConsolidationProvider()
+    app.dependency_overrides[get_ai_usage_repository] = lambda: usage_repository
     monkeypatch.setattr(
         "app.services.ewa_analysis_service.extract_text",
         lambda filename, payload: (
@@ -265,6 +296,13 @@ def test_post_ewa_consolidate_reports_ewa_without_expiration_results(monkeypatch
             "reason": "Sin vencimientos detectados",
         }
     ]
+    assert [
+        (item.client, item.input_tokens, item.output_tokens, item.total_tokens)
+        for item in usage_repository.saved_usages
+    ] == [
+        ("Cliente A", None, None, None),
+        ("Cliente B", None, None, None),
+    ]
 
 
 def test_post_api_ewa_consolidate_alias_returns_workbook(monkeypatch):
@@ -272,7 +310,9 @@ def test_post_api_ewa_consolidate_alias_returns_workbook(monkeypatch):
         def extract_expirations(self, text: str) -> list[dict[str, str]]:
             return [{"nombre": "Kernel", "fecha": "2026-12-31"}]
 
+    usage_repository = StubAiUsageRepository()
     app.dependency_overrides[get_document_intelligence_provider] = lambda: ConsolidationProvider()
+    app.dependency_overrides[get_ai_usage_repository] = lambda: usage_repository
     monkeypatch.setattr(
         "app.services.ewa_analysis_service.extract_text",
         lambda filename, payload: "Kernel expires on 2026-12-31.",

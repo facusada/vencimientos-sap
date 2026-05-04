@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 import json
 import re
 
+from app.models.expiration import AiUsageMetrics
 from app.utils.settings import AppSettings, get_settings
 
 
@@ -38,6 +39,12 @@ class DocumentIntelligenceProvider(ABC):
     @abstractmethod
     def extract_expirations(self, text: str) -> list[dict[str, str]]:
         """Return raw AI findings with keys `nombre`, `fecha`, and optional `hito`."""
+
+    def extract_expirations_with_usage(
+        self,
+        text: str,
+    ) -> tuple[list[dict[str, str]], AiUsageMetrics | None]:
+        return self.extract_expirations(text), None
 
 
 class FakeSemanticDocumentIntelligence(DocumentIntelligenceProvider):
@@ -76,6 +83,13 @@ class AzureOpenAIDocumentIntelligence(DocumentIntelligenceProvider):
         self._client = client or self._build_client()
 
     def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        findings, _ = self.extract_expirations_with_usage(text)
+        return findings
+
+    def extract_expirations_with_usage(
+        self,
+        text: str,
+    ) -> tuple[list[dict[str, str]], AiUsageMetrics | None]:
         try:
             response = self._client.chat.completions.create(
                 model=self._settings.azure_openai_deployment,
@@ -89,7 +103,7 @@ class AzureOpenAIDocumentIntelligence(DocumentIntelligenceProvider):
         except Exception as exc:
             raise ValueError(f"Azure OpenAI request failed: {exc}") from exc
         raw_content = _extract_response_text(response)
-        return _parse_ai_payload(raw_content)
+        return _parse_ai_payload(raw_content), _extract_usage_metrics(response)
 
     def _validate_settings(self) -> None:
         if not self._settings.azure_openai_api_key:
@@ -286,6 +300,28 @@ def _extract_response_text(response: object) -> str:
         return response.choices[0].message.content
     except (AttributeError, IndexError, TypeError) as exc:
         raise ValueError("Azure OpenAI response is not in the expected format") from exc
+
+
+def _extract_usage_metrics(response: object) -> AiUsageMetrics | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+
+    input_tokens = _coerce_usage_value(getattr(usage, "prompt_tokens", None))
+    output_tokens = _coerce_usage_value(getattr(usage, "completion_tokens", None))
+    total_tokens = _coerce_usage_value(getattr(usage, "total_tokens", None))
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        return None
+
+    return AiUsageMetrics(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def _coerce_usage_value(value: object) -> int | None:
+    return value if isinstance(value, int) else None
 
 
 def _parse_ai_payload(content: str) -> list[dict[str, str]]:

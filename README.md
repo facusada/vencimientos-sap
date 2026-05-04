@@ -69,6 +69,7 @@ Completar en tu entorno o shell estas variables:
 - `AZURE_OPENAI_API_KEY`
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_DEPLOYMENT`
+- `DATABASE_URL`
 
 ## Endpoint
 
@@ -126,12 +127,14 @@ La API carga `.env` desde `backend/.env` y tambien tolera ejecuciones que defina
 - El consolidado mensual agrega metadata de cliente y periodo, normaliza componentes a un catalogo inicial y conserva componentes no catalogados para relevamiento.
 - `VistaClientes` prioriza columnas default para componentes frecuentes y resume el resto en `Otros componentes` sin perder trazabilidad en `ComponentesNoCatalogados`.
 - Los EWAs consolidados sin vencimientos detectados se informan en la app sin hacer fallar el archivo completo.
+- El backend persiste en PostgreSQL una fila por EWA consolidado con `client` y `input/output/total_tokens` para auditoria de consumo IA.
 - Para usar Azure OpenAI real, el proveedor se selecciona por variables de entorno.
 
 ## Trazabilidad
 
 - Spec activa backend: `docs/sdd/wip/ewa-expiration-parser/spec.md`
 - Spec activa consolidacion: `docs/sdd/wip/ewa-consolidated-export/spec.md`
+- Spec activa persistencia usage: `docs/sdd/wip/ewa-ai-usage-persistence/spec.md`
 - Spec activa frontend: `docs/sdd/wip/ewa-upload-ui/spec.md`
 - Commit sugerido SDD: `feature(ewa-parser): redefinir flujo PDF a IA para analisis EWA`
 - Commit sugerido implementacion: `feature(ewa-parser): implementar document intelligence para analisis EWA`
