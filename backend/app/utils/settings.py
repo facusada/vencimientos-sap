@@ -16,6 +16,7 @@ class AppSettings:
     azure_openai_api_key: str | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_deployment: str | None = None
+    database_url: str | None = None
 
 
 def get_settings() -> AppSettings:
@@ -24,4 +25,5 @@ def get_settings() -> AppSettings:
         azure_openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
         azure_openai_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
         azure_openai_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+        database_url=os.getenv("DATABASE_URL"),
     )

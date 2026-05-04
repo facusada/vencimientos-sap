@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from app.models.expiration import EwaWithoutExpirationResults
+from app.services.ai_usage_repository import AiUsageRepository
+from app.services.ai_usage_repository import get_ai_usage_repository
 from app.services.document_intelligence import DocumentIntelligenceProvider
 from app.services.ewa_analysis_service import (
     analyze_ewa_file,
@@ -45,6 +47,7 @@ async def consolidate_ewa(
     clients: list[str] = Form(...),
     files: list[UploadFile] = File(...),
     provider: DocumentIntelligenceProvider = Depends(get_document_intelligence_provider),
+    usage_repository: AiUsageRepository = Depends(get_ai_usage_repository),
 ) -> Response:
     file_payloads: list[tuple[str, bytes]] = []
     for file in files:
@@ -53,7 +56,13 @@ async def consolidate_ewa(
         file_payloads.append((file.filename, await file.read()))
 
     try:
-        result = analyze_ewa_files_for_consolidation(file_payloads, clients, period, provider)
+        result = analyze_ewa_files_for_consolidation(
+            file_payloads,
+            clients,
+            period,
+            provider,
+            usage_repository,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

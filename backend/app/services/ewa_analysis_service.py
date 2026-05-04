@@ -2,6 +2,7 @@ from collections.abc import Iterable
 import re
 
 from app.models.expiration import AnalyzedEwaDocument
+from app.models.expiration import AiUsageMetrics
 from app.models.expiration import ConsolidatedAnalysisResult
 from app.models.expiration import ExpirationRecord
 from app.models.expiration import RawExpirationFinding
@@ -14,6 +15,7 @@ from app.services.document_intelligence import (
     create_document_intelligence_provider,
 )
 from app.services.consolidation_service import consolidate_ewa_documents
+from app.services.ai_usage_repository import AiUsageRepository
 from app.services.excel_service import build_consolidated_workbook
 from app.services.excel_service import build_expiration_workbook
 from app.utils.dates import normalize_date
@@ -144,6 +146,7 @@ def analyze_ewa_files_for_consolidation(
     clients: list[str],
     period: str,
     provider: DocumentIntelligenceProvider | None = None,
+    usage_repository: AiUsageRepository | None = None,
 ) -> ConsolidatedAnalysisResult:
     _validate_consolidation_inputs(files, clients, period)
     resolved_provider = provider or get_document_intelligence_provider()
@@ -151,16 +154,20 @@ def analyze_ewa_files_for_consolidation(
 
     for (filename, payload), client in zip(files, clients, strict=True):
         content = extract_text(filename, payload)
+        raw_items, ai_usage = extract_raw_expirations_with_usage(content, resolved_provider)
         documents.append(
             AnalyzedEwaDocument(
                 client=client.strip(),
                 period=period,
                 filename=filename,
-                records=build_expiration_records(content, resolved_provider),
+                records=build_expiration_records_from_raw_items(content, raw_items),
+                ai_usage=ai_usage,
             )
         )
 
     consolidated_data = consolidate_ewa_documents(documents)
+    if usage_repository is not None:
+        usage_repository.save_usages(consolidated_data.ai_usages)
     return ConsolidatedAnalysisResult(
         workbook=build_consolidated_workbook(consolidated_data),
         no_result_documents=consolidated_data.no_result_documents,
@@ -182,27 +189,46 @@ def build_expiration_records(
     text: str,
     provider: DocumentIntelligenceProvider,
 ) -> list[ExpirationRecord]:
-    raw_items = provider.extract_expirations(text)
+    raw_items, _ = extract_raw_expirations_with_usage(text, provider)
+    return build_expiration_records_from_raw_items(text, raw_items)
+
+
+def extract_raw_expirations_with_usage(
+    text: str,
+    provider: DocumentIntelligenceProvider,
+) -> tuple[list[dict[str, str]], AiUsageMetrics | None]:
+    return provider.extract_expirations_with_usage(text)
+
+
+def build_expiration_records_from_raw_items(
+    text: str,
+    raw_items: list[dict[str, str]],
+) -> list[ExpirationRecord]:
     findings = _coerce_raw_findings(raw_items)
     deduplicated: list[ExpirationRecord] = []
     seen: set[tuple[str, str, str]] = set()
 
     for finding in findings:
+        resolved_name = _resolve_finding_name(text, finding)
+        if not _should_export_finding(text, finding, resolved_name):
+            continue
+
         normalized = normalize_date(finding.raw_date)
         if normalized is None:
             continue
 
-        key = (finding.name, normalized.isoformat(), finding.milestone)
+        resolved_milestone = _resolve_finding_milestone(text, finding, resolved_name)
+        key = (resolved_name, normalized.isoformat(), resolved_milestone)
         if key in seen:
             continue
 
         seen.add(key)
         deduplicated.append(
             ExpirationRecord(
-                source_section=_resolve_finding_section(text, finding.raw_date, finding.name),
-                name=finding.name,
+                source_section=_resolve_finding_section(text, finding.raw_date, resolved_name),
+                name=resolved_name,
                 expiration_date=normalized.isoformat(),
-                milestone=finding.milestone,
+                milestone=resolved_milestone,
             )
         )
 
@@ -248,6 +274,8 @@ def _coerce_raw_findings(raw_items: Iterable[dict[str, str]]) -> list[RawExpirat
 
 def _resolve_finding_name(text: str, finding: RawExpirationFinding) -> str:
     suggested_name = finding.name.strip()
+    if suggested_name.lower() == "operating system":
+        return suggested_name
     if _should_preserve_suggested_name(suggested_name):
         return suggested_name
 

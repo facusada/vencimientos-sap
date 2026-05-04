@@ -1,6 +1,16 @@
+from app.models.expiration import AiUsageMetrics
 from app.services.document_intelligence import DocumentIntelligenceProvider
+from app.services.ewa_analysis_service import analyze_ewa_files_for_consolidation
 from app.services.ewa_analysis_service import _is_section_heading
 from app.services.ewa_analysis_service import build_expiration_records
+
+
+class StubAiUsageRepository:
+    def __init__(self) -> None:
+        self.saved_usages = []
+
+    def save_usages(self, usages) -> None:
+        self.saved_usages.extend(usages)
 
 
 class StubProvider(DocumentIntelligenceProvider):
@@ -27,6 +37,41 @@ def test_build_expiration_records_normalizes_and_deduplicates():
     ] == [
         ("", "SAP Product Version", "2027-02-28", ""),
         ("", "Kernel", "2026-12-31", ""),
+    ]
+
+
+class UsageAwareProvider(DocumentIntelligenceProvider):
+    def extract_expirations_with_usage(self, text: str):
+        return (
+            [{"nombre": "Kernel", "fecha": "2026-12-31"}],
+            AiUsageMetrics(input_tokens=700, output_tokens=80, total_tokens=780),
+        )
+
+    def extract_expirations(self, text: str) -> list[dict[str, str]]:
+        return [{"nombre": "Kernel", "fecha": "2026-12-31"}]
+
+
+def test_analyze_ewa_files_for_consolidation_persists_ai_usage(monkeypatch):
+    repository = StubAiUsageRepository()
+    monkeypatch.setattr(
+        "app.services.ewa_analysis_service.extract_text",
+        lambda filename, payload: "Kernel expires on 2026-12-31.",
+    )
+
+    analyze_ewa_files_for_consolidation(
+        files=[("a.pdf", b"a"), ("b.pdf", b"b")],
+        clients=["Cliente A", "Cliente B"],
+        period="2026-04",
+        provider=UsageAwareProvider(),
+        usage_repository=repository,
+    )
+
+    assert [
+        (item.client, item.input_tokens, item.output_tokens, item.total_tokens)
+        for item in repository.saved_usages
+    ] == [
+        ("Cliente A", 700, 80, 780),
+        ("Cliente B", 700, 80, 780),
     ]
 
 

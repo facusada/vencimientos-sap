@@ -1,4 +1,5 @@
 from app.models.expiration import AnalyzedEwaDocument
+from app.models.expiration import AiUsageMetrics
 from app.models.expiration import ExpirationRecord
 from app.services.consolidation_service import consolidate_ewa_documents
 
@@ -9,6 +10,7 @@ def test_consolidate_ewa_documents_adds_client_period_source_and_component_catal
             client="Cliente A",
             period="2026-04",
             filename="cliente-a.pdf",
+            ai_usage=AiUsageMetrics(input_tokens=900, output_tokens=120, total_tokens=1020),
             records=[
                 ExpirationRecord(
                     source_section="SAP Kernel Release",
@@ -60,11 +62,37 @@ def test_consolidate_ewa_documents_adds_client_period_source_and_component_catal
         ),
     ]
     assert result.clients == [("Cliente A", "2026-04")]
+    assert [
+        (
+            item.client,
+            item.period,
+            item.source_filename,
+            item.input_tokens,
+            item.output_tokens,
+            item.total_tokens,
+        )
+        for item in result.ai_usages
+    ] == [
+        (
+            "Cliente A",
+            "2026-04",
+            "cliente-a.pdf",
+            900,
+            120,
+            1020,
+        )
+    ]
 
 
 def test_consolidate_ewa_documents_keeps_client_row_when_no_records_are_detected():
     documents = [
-        AnalyzedEwaDocument(client="Cliente Sin Fiori", period="2026-04", filename="empty.pdf", records=[])
+        AnalyzedEwaDocument(
+            client="Cliente Sin Fiori",
+            period="2026-04",
+            filename="empty.pdf",
+            ai_usage=AiUsageMetrics(input_tokens=400, output_tokens=20, total_tokens=420),
+            records=[],
+        )
     ]
 
     result = consolidate_ewa_documents(documents)
@@ -80,5 +108,25 @@ def test_consolidate_ewa_documents_keeps_client_row_when_no_records_are_detected
             "2026-04",
             "empty.pdf",
             "Sin vencimientos detectados",
+        )
+    ]
+    assert [
+        (
+            item.client,
+            item.period,
+            item.source_filename,
+            item.input_tokens,
+            item.output_tokens,
+            item.total_tokens,
+        )
+        for item in result.ai_usages
+    ] == [
+        (
+            "Cliente Sin Fiori",
+            "2026-04",
+            "empty.pdf",
+            400,
+            20,
+            420,
         )
     ]
