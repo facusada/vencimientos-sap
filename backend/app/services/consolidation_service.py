@@ -3,6 +3,7 @@ from app.models.expiration import ConsolidatedExpiration
 from app.models.expiration import ConsolidatedWorkbookData
 from app.models.expiration import EwaAiUsage
 from app.models.expiration import EwaWithoutExpirationResults
+from app.services.component_catalog import normalize_component_name
 
 NO_EXPIRATION_RESULTS_REASON = "Sin vencimientos detectados"
 
@@ -44,17 +45,18 @@ def consolidate_ewa_documents(documents: list[AnalyzedEwaDocument]) -> Consolida
             continue
 
         for record in document.records:
+            component_match = normalize_component_name(record.name)
             records.append(
                 ConsolidatedExpiration(
                     client=document.client,
                     period=document.period,
-                    component=record.name,
+                    component=component_match.canonical_name,
                     detected_name=record.name,
                     milestone=record.milestone,
                     expiration_date=record.expiration_date,
                     source_section=record.source_section,
                     source_filename=document.filename,
-                    is_cataloged=True,
+                    is_cataloged=component_match.is_cataloged,
                 )
             )
 
