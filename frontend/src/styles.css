@@ -687,6 +687,48 @@ code {
   font-size: 0.88rem;
 }
 
+.merge-file-list {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.merge-file-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.merge-file-list__meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.merge-file-list__meta strong,
+.merge-file-list__meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merge-file-list__meta strong {
+  font-size: 0.94rem;
+}
+
+.merge-file-list__meta span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .action-bar {
   margin-top: 14px;
   border-radius: var(--radius-xl);

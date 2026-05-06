@@ -6,8 +6,12 @@ import App from "../App.vue";
 vi.mock("../lib/dashboardWorkbook.js", () => ({
   parseDashboardWorkbook: vi.fn(),
 }));
+vi.mock("../lib/workbookMerge.js", () => ({
+  mergeWorkbookFiles: vi.fn(),
+}));
 
 const { parseDashboardWorkbook } = await import("../lib/dashboardWorkbook.js");
+const { mergeWorkbookFiles } = await import("../lib/workbookMerge.js");
 
 describe("App consolidated upload flow", () => {
   let createObjectUrlSpy;
@@ -44,8 +48,61 @@ describe("App consolidated upload flow", () => {
 
     expect(wrapper.get("[aria-label='Vista Exportar']").attributes("aria-pressed")).toBe("true");
     expect(wrapper.get("[aria-label='Vista Graficos']").attributes("aria-pressed")).toBe("false");
+    expect(wrapper.get("[aria-label='Vista Merge']").attributes("aria-pressed")).toBe("false");
     expect(wrapper.text()).toContain("Unifica EWAs. Exporta la base.");
     expect(wrapper.text()).toContain("Generar Excel");
+  });
+
+  it("shows an empty state in merge before selecting workbooks", async () => {
+    const wrapper = mount(App);
+    await wrapper.get("[aria-label='Vista Merge']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Todavia no cargaste excels para mergear");
+    expect(wrapper.text()).toContain("Subi al menos 2 archivos");
+    expect(wrapper.get("button[type='button'][aria-label='Generar merge']").attributes("disabled")).toBeDefined();
+  });
+
+  it("merges selected workbooks and downloads the resulting file", async () => {
+    mergeWorkbookFiles.mockResolvedValue({
+      blob: new Blob(["xlsx"]),
+      filename: "ewa-merged.xlsx",
+      workbookCount: 2,
+      mergedRowCount: 5,
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get("[aria-label='Vista Merge']").trigger("click");
+    await flushPromises();
+
+    const mergeInput = wrapper.get("input[type='file'][accept='.xlsx'][multiple]");
+    Object.defineProperty(mergeInput.element, "files", {
+      value: [
+        new File(["a"], "ACES_vencimientos_Mayo_2026.xlsx", {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        new File(["b"], "MRP_vencimientos_Mayo_2026.xlsx", {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+      ],
+      configurable: true,
+    });
+    await mergeInput.trigger("change");
+    await flushPromises();
+
+    await wrapper.get("button[type='button'][aria-label='Generar merge']").trigger("click");
+    await flushPromises();
+
+    expect(mergeWorkbookFiles).toHaveBeenCalledTimes(1);
+    expect(mergeWorkbookFiles.mock.calls[0][0].map((file) => file.name)).toEqual([
+      "ACES_vencimientos_Mayo_2026.xlsx",
+      "MRP_vencimientos_Mayo_2026.xlsx",
+    ]);
+    expect(anchorClickSpy).toHaveBeenCalledOnce();
+    expect(createObjectUrlSpy).toHaveBeenCalledOnce();
+    expect(revokeObjectUrlSpy).toHaveBeenCalledWith("blob:ewa");
+    expect(wrapper.text()).toContain("Merge listo");
+    expect(wrapper.text()).toContain("2 excels");
   });
 
   it("shows an empty state in dashboard before loading any excel or remote data", async () => {

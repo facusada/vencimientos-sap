@@ -15,11 +15,12 @@ Servicio FastAPI orientado a documentos SAP EarlyWatch Alert en PDF para detecta
 - `backend/app/services/component_catalog.py`: normalizacion de componentes para consolidacion.
 - `backend/app/services/consolidation_service.py`: armado de registros consolidados por cliente y periodo.
 - `backend/app/services/excel_service.py`: exportacion Excel.
+- `backend/app/services/workbook_merge_service.py`: merge backend de excels EWA ya generados.
 - `backend/app/models/`: contratos de dominio.
 - `backend/app/utils/`: utilidades de normalizacion.
 - `backend/tests/`: pruebas unitarias e integracion del backend.
 - `backend/pyproject.toml`: configuracion del paquete y tooling Python.
-- `frontend/`: interfaz Vue 3 para carga de EWAs, descarga del Excel y dashboard de vencimientos.
+- `frontend/`: interfaz Vue 3 para carga de EWAs, descarga del Excel, dashboard de vencimientos y merge de excels EWA.
 - `docs/`: especificaciones SDD y arquitectura del proyecto.
 
 ## Desarrollo
@@ -84,14 +85,22 @@ Completar en tu entorno o shell estas variables:
 - Output: archivo Excel `.xlsx` descargable con hojas `Base`, `VistaClientes` y `ComponentesNoCatalogados`
   La hoja `VistaClientes` usa columnas default estables y agrega `Otros componentes` para agrupar hallazgos fuera del set principal.
 
+## Merge de excels EWA
+
+- El backend incorpora un servicio dedicado para unir 2 o mas excels ya generados por el flujo EWA.
+- El contrato esperado de entrada es hoja `Base` con columnas `Cliente`, `Componente`, `FechaVencimiento`.
+- El merge concatena filas en orden estable y devuelve un nuevo workbook con la misma hoja `Base`.
+- Esta capacidad queda desacoplada del flujo `PDF -> IA -> Excel` y del endpoint `POST /ewa/consolidate`.
+
 ## Frontend
 
 - UI Vue 3 standalone con Vite.
 - En desarrollo consume `VITE_API_BASE_URL=/api` por defecto y Vite proxyea `/api` hacia `http://127.0.0.1:8000`.
-- La app expone dos vistas: `Exportar` para el consolidado mensual actual y `Graficos` para dashboards operativos.
+- La app expone tres vistas: `Exportar` para el consolidado mensual actual, `Graficos` para dashboards operativos y `Merge` para unir excels EWA ya generados.
 - Flujo `Exportar`: seleccionar multiples EWAs para consolidado mensual, enviar, recibir Excel y disparar descarga.
 - Flujo `Graficos`: cargar un Excel `.xlsx` con hoja `Base` y columnas `Cliente`, `Componente`, `FechaVencimiento` para renderizar metricas y graficos en el browser.
 - La vista `Graficos` sigue preparada para un endpoint futuro `GET /ewa/dashboard`, con fallback demo mientras ese backend no exista o no se cargue Excel.
+- Flujo `Merge`: cargar 2 o mas excels `.xlsx` con hoja `Base`, unir filas en frontend y descargar un workbook merged.
 
 ## Deploy en Vercel
 
@@ -137,8 +146,10 @@ La API carga `.env` desde `backend/.env` y tambien tolera ejecuciones que defina
 
 - Spec activa backend: `docs/sdd/wip/ewa-expiration-parser/spec.md`
 - Spec activa consolidacion: `docs/sdd/wip/ewa-consolidated-export/spec.md`
+- Spec activa merge workbooks: `docs/sdd/wip/ewa-workbook-merge/spec.md`
 - Spec activa persistencia usage: `docs/sdd/wip/ewa-ai-usage-persistence/spec.md`
 - Spec activa frontend: `docs/sdd/wip/ewa-upload-ui/spec.md`
 - Spec activa dashboard frontend: `docs/sdd/wip/ewa-dashboard-ui/spec.md`
+- Spec activa merge workbooks frontend: `docs/sdd/wip/ewa-workbook-merge-ui/spec.md`
 - Commit sugerido SDD: `feature(ewa-parser): redefinir flujo PDF a IA para analisis EWA`
 - Commit sugerido implementacion: `feature(ewa-parser): implementar document intelligence para analisis EWA`
