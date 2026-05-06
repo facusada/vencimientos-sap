@@ -269,8 +269,6 @@ def test_build_expiration_records_filters_analysis_dates_while_preserving_specif
 
     assert [(item.source_section, item.name, item.expiration_date, item.milestone) for item in result] == [
         ("HANA Database Support Package Stack for HEP", "SAP HANA Database", "2023-12-31", ""),
-        ("Operating System(s) - Maintenance Phases", "SAP HANA Database", "2029-05-31", ""),
-        ("Operating System(s) - Maintenance Phases", "SAP HANA Database", "2031-05-31", ""),
     ]
 
 
@@ -477,4 +475,27 @@ def test_build_expiration_records_does_not_use_recommendation_sentence_as_sectio
         ("4.5 Database - Maintenance Phases", "SQL Server 2012"),
         ("4.6 Operating System(s) - Maintenance Phases", "Windows Server 2012 R2"),
         ("4.1 SAP Application Release - Maintenance Phases", "EHP7 FOR SAP ERP 6.0"),
+    ]
+
+
+def test_build_expiration_records_excludes_sap_erp_enhance_package():
+    class ExcludedComponentProvider(DocumentIntelligenceProvider):
+        def extract_expirations(self, text: str) -> list[dict[str, str]]:
+            return [
+                {"nombre": "SAP ERP ENHANCE PACKAGE", "fecha": "31.12.2027"},
+                {"nombre": "SAP NETWEAVER 7.5", "fecha": "31.12.2027"},
+            ]
+
+    text = """
+    4.1 SAP Application Release - Maintenance Phases
+    SAP ERP ENHANCE PACKAGE
+    31.12.2027
+    SAP NETWEAVER 7.5
+    31.12.2027
+    """
+
+    result = build_expiration_records(text, ExcludedComponentProvider())
+
+    assert [(item.name, item.expiration_date) for item in result] == [
+        ("SAP NETWEAVER 7.5", "2027-12-31"),
     ]

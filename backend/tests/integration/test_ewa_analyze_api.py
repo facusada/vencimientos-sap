@@ -234,14 +234,10 @@ def test_post_ewa_consolidate_returns_monthly_workbook_for_multiple_pdfs(monkeyp
     assert "attachment; filename=ewa-consolidated.xlsx" in response.headers["content-disposition"]
 
     workbook = load_workbook(filename=BytesIO(response.content))
-    assert workbook.sheetnames == ["Base", "VistaClientes", "ComponentesNoCatalogados"]
+    assert workbook.sheetnames == ["Base"]
     assert workbook["Base"]["A2"].value == "Cliente A"
-    assert workbook["Base"]["B2"].value == "SAP Kernel"
+    assert workbook["Base"]["B2"].value == "SAP Kernel Release"
     assert workbook["Base"]["C2"].value == "2026-12-31"
-    assert workbook["VistaClientes"]["A3"].value == "Cliente B"
-    assert workbook["VistaClientes"]["F3"].value == "2027-12-31"
-    assert workbook["VistaClientes"]["L2"].value == "SAP Cloud Connector: 2027-01-31"
-    assert workbook["ComponentesNoCatalogados"]["A2"].value == "SAP Cloud Connector"
     assert "x-ewa-no-results" not in response.headers
     assert [
         (item.client, item.input_tokens, item.output_tokens, item.total_tokens)
@@ -287,7 +283,7 @@ def test_post_ewa_consolidate_reports_ewa_without_expiration_results(monkeypatch
     assert response.status_code == 200
 
     workbook = load_workbook(filename=BytesIO(response.content))
-    assert workbook.sheetnames == ["Base", "VistaClientes", "ComponentesNoCatalogados"]
+    assert workbook.sheetnames == ["Base"]
     assert json.loads(response.headers["x-ewa-no-results"]) == [
         {
             "client": "Cliente B",

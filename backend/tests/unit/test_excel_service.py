@@ -83,7 +83,7 @@ def test_build_expiration_workbook_applies_status_colors_for_expired_and_active_
     assert sheet["D3"].fill.fgColor.rgb == "00CFE8C6"
 
 
-def test_build_consolidated_workbook_generates_base_client_view_and_uncataloged_sheets():
+def test_build_consolidated_workbook_generates_base_sheet_only():
     payload = build_consolidated_workbook(
         ConsolidatedWorkbookData(
             clients=[("Cliente A", "2026-04"), ("Cliente B", "2026-04")],
@@ -127,7 +127,7 @@ def test_build_consolidated_workbook_generates_base_client_view_and_uncataloged_
 
     workbook = load_workbook(filename=BytesIO(payload))
 
-    assert workbook.sheetnames == ["Base", "VistaClientes", "ComponentesNoCatalogados"]
+    assert workbook.sheetnames == ["Base"]
 
     base = workbook["Base"]
     assert [base.cell(row=1, column=column).value for column in range(1, 4)] == [
@@ -141,41 +141,13 @@ def test_build_consolidated_workbook_generates_base_client_view_and_uncataloged_
         "2026-12-31",
     ]
 
-    client_view = workbook["VistaClientes"]
-    assert [client_view.cell(row=1, column=column).value for column in range(1, 13)] == [
-        "Cliente",
-        "Periodo",
-        "SAP Product Version",
-        "SAP NetWeaver",
-        "SAP Solution Manager",
-        "SAP Fiori",
-        "SAP Kernel",
-        "Database",
-        "Operating System",
-        "Support Package Stack",
-        "Certificates",
-        "Otros componentes",
-    ]
-    assert client_view["A2"].value == "Cliente A"
-    assert client_view["B2"].value == "2026-04"
-    assert client_view["E2"].value == "2027-12-31"
-    assert client_view["G2"].value == "2026-12-31 (End of Standard Vendor Support)"
-    assert client_view["L2"].value == "SAP Cloud Connector: 2027-01-31"
-    assert client_view["A3"].value == "Cliente B"
-    assert client_view["G3"].value is None
-
-    uncataloged = workbook["ComponentesNoCatalogados"]
-    assert [uncataloged.cell(row=1, column=column).value for column in range(1, 6)] == [
-        "NombreDetectado",
-        "Cliente",
-        "Periodo",
-        "FechaVencimiento",
-        "FuenteEWA",
-    ]
-    assert [uncataloged.cell(row=2, column=column).value for column in range(1, 6)] == [
-        "SAP Cloud Connector",
+    assert [base.cell(row=3, column=column).value for column in range(1, 4)] == [
         "Cliente A",
-        "2026-04",
+        "SAP Solution Manager",
+        "2027-12-31",
+    ]
+    assert [base.cell(row=4, column=column).value for column in range(1, 4)] == [
+        "Cliente A",
+        "SAP Cloud Connector",
         "2027-01-31",
-        "cliente-a.pdf",
     ]
