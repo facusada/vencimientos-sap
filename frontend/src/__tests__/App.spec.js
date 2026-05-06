@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.vue";
 
+vi.mock("../lib/dashboardWorkbook.js", () => ({
+  parseDashboardWorkbook: vi.fn(),
+}));
+
+const { parseDashboardWorkbook } = await import("../lib/dashboardWorkbook.js");
+
 describe("App consolidated upload flow", () => {
   let createObjectUrlSpy;
   let revokeObjectUrlSpy;
@@ -25,6 +31,7 @@ describe("App consolidated upload flow", () => {
   }
 
   beforeEach(() => {
+    vi.clearAllMocks();
     createObjectUrlSpy = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:ewa");
     revokeObjectUrlSpy = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     appendChildSpy = vi.spyOn(document.body, "appendChild").mockImplementation(() => {});
@@ -32,14 +39,137 @@ describe("App consolidated upload flow", () => {
     anchorClickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   });
 
-  it("renders consolidated mode only", () => {
+  it("renders export mode by default and exposes dashboard navigation", () => {
     const wrapper = mount(App);
 
-    expect(wrapper.text()).toContain("Exportar");
-    expect(wrapper.text()).not.toContain("Individual");
+    expect(wrapper.get("[aria-label='Vista Exportar']").attributes("aria-pressed")).toBe("true");
+    expect(wrapper.get("[aria-label='Vista Graficos']").attributes("aria-pressed")).toBe("false");
     expect(wrapper.text()).toContain("Unifica EWAs. Exporta la base.");
-    expect(wrapper.text()).toContain("FechaVencimiento");
     expect(wrapper.text()).toContain("Generar Excel");
+  });
+
+  it("shows an empty state in dashboard before loading any excel or remote data", async () => {
+    const fetchSpy = vi.spyOn(window, "fetch");
+
+    const wrapper = mount(App);
+    await wrapper.get("[aria-label='Vista Graficos']").trigger("click");
+    await flushPromises();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Todavia no cargaste un Excel");
+    expect(wrapper.text()).toContain("Subi un consolidado");
+    expect(wrapper.text()).not.toContain("Clientes monitoreados");
+  });
+
+  it("loads demo data when the endpoint is unavailable after a manual refresh", async () => {
+    vi.spyOn(window, "fetch").mockRejectedValue(new Error("network down"));
+
+    const wrapper = mount(App);
+    await wrapper.get("[aria-label='Vista Graficos']").trigger("click");
+    await wrapper.get("button[type='button'][aria-label='Actualizar graficos']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Vencimientos en foco.");
+    expect(wrapper.text()).toContain("Clientes monitoreados");
+    expect(wrapper.text()).toContain("Mostrando datos demo");
+    expect(wrapper.text()).toContain("Supervielle");
+  });
+
+  it("loads dashboard data from the configured endpoint for the selected period", async () => {
+    const buildDashboardResponse = () =>
+      new Response(
+        JSON.stringify({
+          period: "2026-08",
+          source: "api",
+          summary: {
+            totalClients: 4,
+            totalExpirations: 9,
+            expiringIn90Days: 3,
+            uniqueComponents: 5,
+          },
+          expirationsByMonth: [
+            { month: "2026-08", count: 2 },
+            { month: "2026-09", count: 7 },
+          ],
+          expirationsByComponent: [
+            { component: "SAP ERP", count: 4 },
+            { component: "SAP PI", count: 3 },
+          ],
+          clientsAtRisk: [
+            { client: "Acme", expirations: 5, nextExpiration: "2026-08-19" },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValueOnce(buildDashboardResponse());
+
+    const wrapper = mount(App);
+    await wrapper.get("[aria-label='Vista Graficos']").trigger("click");
+    await wrapper.get("input[type='month']").setValue("2026-08");
+    await wrapper.get("button[type='button'][aria-label='Actualizar graficos']").trigger("click");
+    await flushPromises();
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, "/api/ewa/dashboard?period=2026-08", {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+    expect(wrapper.text()).toContain("Datos sincronizados");
+    expect(wrapper.text()).toContain("Acme");
+    expect(wrapper.text()).toContain("9");
+  });
+
+  it("loads dashboard data from a local Excel file and prioritizes it over demo data", async () => {
+    vi.spyOn(window, "fetch").mockRejectedValue(new Error("network down"));
+    parseDashboardWorkbook.mockResolvedValue({
+      period: "2026-05",
+      source: "workbook",
+      summary: {
+        totalClients: 1,
+        totalExpirations: 2,
+        expiringIn90Days: 1,
+        uniqueComponents: 2,
+      },
+      expirationsByMonth: [
+        { month: "2026-05", count: 1 },
+        { month: "2026-06", count: 1 },
+      ],
+      expirationsByComponent: [
+        { component: "SAP ERP", count: 1 },
+        { component: "SAP FIORI", count: 1 },
+      ],
+      clientsAtRisk: [
+        { client: "MRP", expirations: 2, nextExpiration: "2026-05-14" },
+      ],
+    });
+
+    const wrapper = mount(App);
+    await wrapper.get("[aria-label='Vista Graficos']").trigger("click");
+    await flushPromises();
+
+    const workbookInput = wrapper.get("input[type='file'][accept='.xlsx']");
+    Object.defineProperty(workbookInput.element, "files", {
+      value: [
+        new File(["excel"], "MRP_vencimientos_Mayo_2026.xlsx", {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+      ],
+      configurable: true,
+    });
+    await workbookInput.trigger("change");
+    await flushPromises();
+
+    expect(parseDashboardWorkbook).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("Datos cargados desde Excel local");
+    expect(wrapper.text()).toContain("MRP");
+    expect(wrapper.text()).toContain("2");
   });
 
   it("keeps submit disabled until each EWA has one client", async () => {

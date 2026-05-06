@@ -19,7 +19,7 @@ Servicio FastAPI orientado a documentos SAP EarlyWatch Alert en PDF para detecta
 - `backend/app/utils/`: utilidades de normalizacion.
 - `backend/tests/`: pruebas unitarias e integracion del backend.
 - `backend/pyproject.toml`: configuracion del paquete y tooling Python.
-- `frontend/`: interfaz Vue 3 para carga de EWAs y descarga del Excel.
+- `frontend/`: interfaz Vue 3 para carga de EWAs, descarga del Excel y dashboard de vencimientos.
 - `docs/`: especificaciones SDD y arquitectura del proyecto.
 
 ## Desarrollo
@@ -88,7 +88,10 @@ Completar en tu entorno o shell estas variables:
 
 - UI Vue 3 standalone con Vite.
 - En desarrollo consume `VITE_API_BASE_URL=/api` por defecto y Vite proxyea `/api` hacia `http://127.0.0.1:8000`.
-- Flujo principal: seleccionar un EWA individual o multiples EWAs para consolidado mensual, enviar, recibir Excel y disparar descarga.
+- La app expone dos vistas: `Exportar` para el consolidado mensual actual y `Graficos` para dashboards operativos.
+- Flujo `Exportar`: seleccionar multiples EWAs para consolidado mensual, enviar, recibir Excel y disparar descarga.
+- Flujo `Graficos`: cargar un Excel `.xlsx` con hoja `Base` y columnas `Cliente`, `Componente`, `FechaVencimiento` para renderizar metricas y graficos en el browser.
+- La vista `Graficos` sigue preparada para un endpoint futuro `GET /ewa/dashboard`, con fallback demo mientras ese backend no exista o no se cargue Excel.
 
 ## Deploy en Vercel
 
@@ -136,5 +139,6 @@ La API carga `.env` desde `backend/.env` y tambien tolera ejecuciones que defina
 - Spec activa consolidacion: `docs/sdd/wip/ewa-consolidated-export/spec.md`
 - Spec activa persistencia usage: `docs/sdd/wip/ewa-ai-usage-persistence/spec.md`
 - Spec activa frontend: `docs/sdd/wip/ewa-upload-ui/spec.md`
+- Spec activa dashboard frontend: `docs/sdd/wip/ewa-dashboard-ui/spec.md`
 - Commit sugerido SDD: `feature(ewa-parser): redefinir flujo PDF a IA para analisis EWA`
 - Commit sugerido implementacion: `feature(ewa-parser): implementar document intelligence para analisis EWA`

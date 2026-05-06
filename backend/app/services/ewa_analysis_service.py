@@ -123,6 +123,9 @@ SECTION_HEADING_HINTS = (
 PERIOD_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 STANDARD_VENDOR_SUPPORT = "End of Standard Vendor Support"
 EXTENDED_VENDOR_SUPPORT = "End of Extended Vendor Support"
+EXCLUDED_COMPONENT_HINTS = (
+    "sap erp enhance package",
+)
 
 
 def get_document_intelligence_provider() -> DocumentIntelligenceProvider:
@@ -205,8 +208,8 @@ def build_expiration_records_from_raw_items(
     raw_items: list[dict[str, str]],
 ) -> list[ExpirationRecord]:
     findings = _coerce_raw_findings(raw_items)
-    deduplicated: list[ExpirationRecord] = []
-    seen: set[tuple[str, str, str]] = set()
+    records_by_name: dict[str, ExpirationRecord] = {}
+    ordered_names: list[str] = []
 
     for finding in findings:
         resolved_name = _resolve_finding_name(text, finding)
@@ -218,20 +221,23 @@ def build_expiration_records_from_raw_items(
             continue
 
         resolved_milestone = _resolve_finding_milestone(text, finding, resolved_name)
-        key = (resolved_name, normalized.isoformat(), resolved_milestone)
-        if key in seen:
-            continue
-
-        seen.add(key)
-        deduplicated.append(
-            ExpirationRecord(
-                source_section=_resolve_finding_section(text, finding.raw_date, resolved_name),
-                name=resolved_name,
-                expiration_date=normalized.isoformat(),
-                milestone=resolved_milestone,
-            )
+        next_record = ExpirationRecord(
+            source_section=_resolve_finding_section(text, finding.raw_date, resolved_name),
+            name=resolved_name,
+            expiration_date=normalized.isoformat(),
+            milestone=resolved_milestone,
         )
 
+        existing = records_by_name.get(resolved_name)
+        if existing is None:
+            records_by_name[resolved_name] = next_record
+            ordered_names.append(resolved_name)
+            continue
+
+        if _should_replace_record_for_same_name(existing, next_record):
+            records_by_name[resolved_name] = next_record
+
+    deduplicated = [records_by_name[name] for name in ordered_names]
     return _prefer_extended_vendor_support(deduplicated)
 
 
@@ -255,6 +261,16 @@ def _prefer_extended_vendor_support(records: list[ExpirationRecord]) -> list[Exp
         filtered.append(record)
 
     return filtered
+
+
+def _should_replace_record_for_same_name(
+    current_record: ExpirationRecord,
+    next_record: ExpirationRecord,
+) -> bool:
+    return (
+        current_record.milestone != EXTENDED_VENDOR_SUPPORT
+        and next_record.milestone == EXTENDED_VENDOR_SUPPORT
+    )
 
 
 def _coerce_raw_findings(raw_items: Iterable[dict[str, str]]) -> list[RawExpirationFinding]:
@@ -544,6 +560,10 @@ def _is_invalid_candidate_name(candidate_name: str) -> bool:
 
 
 def _should_export_finding(text: str, finding: RawExpirationFinding, resolved_name: str) -> bool:
+    normalized_name = resolved_name.strip().lower()
+    if any(excluded_hint in normalized_name for excluded_hint in EXCLUDED_COMPONENT_HINTS):
+        return False
+
     contexts = _collect_context_windows(text, finding.raw_date)
     local_contexts = _collect_context_windows(text, finding.raw_date, lookback=2, lookahead=2)
     if not contexts:

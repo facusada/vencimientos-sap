@@ -23,7 +23,8 @@ def _extract_pdf_text(payload: bytes) -> str:
     seen: set[str] = set()
 
     with pdfplumber.open(BytesIO(payload)) as pdf:
-        for page in pdf.pages:
+        # Hard rule: ignore the first page of every EWA.
+        for page in pdf.pages[1:]:
             _append_unique_lines(lines, seen, _extract_page_layout_lines(page))
             _append_unique_lines(lines, seen, _extract_page_table_lines(page))
 
