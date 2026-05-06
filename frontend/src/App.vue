@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 import DashboardWorkspace from "./components/DashboardWorkspace.vue";
 import ExportWorkspace from "./components/ExportWorkspace.vue";
+import MergeWorkspace from "./components/MergeWorkspace.vue";
 
 const activeView = ref("export");
 
@@ -16,6 +17,11 @@ const views = [
     id: "dashboard",
     label: "Graficos",
     ariaLabel: "Vista Graficos",
+  },
+  {
+    id: "merge",
+    label: "Merge",
+    ariaLabel: "Vista Merge",
   },
 ];
 </script>
@@ -45,6 +51,7 @@ const views = [
     </header>
 
     <ExportWorkspace v-if="activeView === 'export'" />
-    <DashboardWorkspace v-else />
+    <DashboardWorkspace v-else-if="activeView === 'dashboard'" />
+    <MergeWorkspace v-else />
   </main>
 </template>
