@@ -236,7 +236,7 @@ def test_post_ewa_consolidate_returns_monthly_workbook_for_multiple_pdfs(monkeyp
     workbook = load_workbook(filename=BytesIO(response.content))
     assert workbook.sheetnames == ["Base"]
     assert workbook["Base"]["A2"].value == "Cliente A"
-    assert workbook["Base"]["B2"].value == "SAP Kernel Release"
+    assert workbook["Base"]["B2"].value == "SAP Kernel"
     assert workbook["Base"]["C2"].value == "2026-12-31"
     assert "x-ewa-no-results" not in response.headers
     assert [
