@@ -14,14 +14,14 @@ const views = [
     ariaLabel: "Vista Exportar",
   },
   {
-    id: "dashboard",
-    label: "Graficos",
-    ariaLabel: "Vista Graficos",
-  },
-  {
     id: "merge",
     label: "Merge",
     ariaLabel: "Vista Merge",
+  },
+  {
+    id: "dashboard",
+    label: "Graficos",
+    ariaLabel: "Vista Graficos",
   },
 ];
 </script>
